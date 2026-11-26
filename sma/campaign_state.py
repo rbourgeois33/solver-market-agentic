@@ -42,6 +42,16 @@ def amg_family(d: dict) -> str:
 
 def krylov_family(d: dict) -> str | None:
     s = d["solver"].lower()
+    if d["lib"] == "muelu":
+        # Belos names are case-insensitive and Tpetra registers extra variants (e.g. pipelined /
+        # single-reduce CG) at run time: classify by family, Belos rejects unknown names itself.
+        if "bicgstab" in s:
+            return "bicgstab"
+        if "gmres" in s or "gcrodr" in s:
+            return "gmres"
+        if "cg" in s and "minres" not in s:
+            return "cg"
+        return None
     for fam, per_lib in KRYLOV_FAMILIES.items():
         if s in per_lib[d["lib"]]:
             return fam
