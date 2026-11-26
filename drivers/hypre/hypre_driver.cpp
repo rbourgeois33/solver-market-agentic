@@ -26,113 +26,136 @@ void check(HYPRE_Int ierr, const char* what) {
   }
 }
 
-// ---------------------------------------------------------------- BoomerAMG setter table
-using AmgSetter = std::function<void(HYPRE_Solver, const std::string&, int k)>;
+// ---------------------------------------------------------------- parameter tables
+// Generated at build time from the installed headers (gen_params.py -> hypre_params.inc): every
+// HYPRE_BoomerAMGSet<Name> and Krylov Set<Name> taking plain values. Deck value syntax:
+// "3", "0.25", list "1,2,3" (arrays: copied into hypre-allocated host memory, hypre frees them).
+// Indexed setters (level / cycle part) are written "Name:k".
+struct ParamSetter {
+  bool indexed;
+  HYPRE_Int (*set)(HYPRE_Solver, const std::string&, HYPRE_Int);
+};
+using ParamTable = std::map<std::string, ParamSetter>;
 
-#define AMG_INT(N) {#N, [](HYPRE_Solver s, const std::string& v, int) { check(HYPRE_BoomerAMGSet##N(s, std::stoi(v)), #N); }}
-#define AMG_DBL(N) {#N, [](HYPRE_Solver s, const std::string& v, int) { check(HYPRE_BoomerAMGSet##N(s, std::stod(v)), #N); }}
-#define AMG_INT_K(N) {#N, [](HYPRE_Solver s, const std::string& v, int k) { check(HYPRE_BoomerAMGSet##N(s, std::stoi(v), k), #N); }}
+HYPRE_Int to_int(const std::string& v) {
+  size_t pos;
+  long x = std::stol(v, &pos);
+  if (pos != v.size()) throw std::runtime_error("not an integer: '" + v + "'");
+  return (HYPRE_Int)x;
+}
+HYPRE_Real to_real(const std::string& v) {
+  size_t pos;
+  double x = std::stod(v, &pos);
+  if (pos != v.size()) throw std::runtime_error("not a number: '" + v + "'");
+  return (HYPRE_Real)x;
+}
+std::vector<std::string> split_list(const std::string& v) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (char c : v) {
+    if (c == ',') { out.push_back(cur); cur.clear(); }
+    else if (c != '[' && c != ']' && c != ' ') cur += c;
+  }
+  if (!cur.empty()) out.push_back(cur);
+  if (out.empty()) throw std::runtime_error("empty list");
+  return out;
+}
+size_t list_len(const std::string& v) { return split_list(v).size(); }
+HYPRE_Int* int_array(const std::string& v) {
+  auto e = split_list(v);
+  HYPRE_Int* a = hypre_CTAlloc(HYPRE_Int, e.size(), HYPRE_MEMORY_HOST);
+  for (size_t i = 0; i < e.size(); ++i) a[i] = to_int(e[i]);
+  return a;
+}
+HYPRE_Real* real_array(const std::string& v) {
+  auto e = split_list(v);
+  HYPRE_Real* a = hypre_CTAlloc(HYPRE_Real, e.size(), HYPRE_MEMORY_HOST);
+  for (size_t i = 0; i < e.size(); ++i) a[i] = to_real(e[i]);
+  return a;
+}
 
-const std::map<std::string, AmgSetter>& amg_setters() {
-  static const std::map<std::string, AmgSetter> t = {
-      // hierarchy
-      AMG_INT(MaxLevels), AMG_INT(MaxCoarseSize), AMG_INT(MinCoarseSize),
-      // strength / coarsening
-      AMG_DBL(StrongThreshold), AMG_DBL(StrongThresholdR), AMG_DBL(FilterThresholdR), AMG_DBL(MaxRowSum),
-      AMG_INT(CoarsenType), AMG_INT(MeasureType), AMG_INT(AggNumLevels), AMG_INT(NumPaths),
-      AMG_INT(CGCIts), AMG_DBL(NonGalerkinTol),
-      // interpolation
-      AMG_INT(InterpType), AMG_DBL(TruncFactor), AMG_INT(PMaxElmts), AMG_INT(AggInterpType),
-      AMG_DBL(AggTruncFactor), AMG_DBL(AggP12TruncFactor), AMG_INT(AggPMaxElmts), AMG_INT(AggP12MaxElmts),
-      // cycle / smoothing
-      AMG_INT(CycleType), AMG_INT(FCycle), AMG_INT(NumSweeps), AMG_INT_K(CycleNumSweeps),
-      AMG_INT(RelaxType), AMG_INT_K(CycleRelaxType), AMG_INT(RelaxOrder), AMG_DBL(RelaxWt), AMG_DBL(OuterWt),
-      AMG_INT(ChebyOrder), AMG_DBL(ChebyFraction), AMG_INT(ChebyEigEst), AMG_INT(ChebyVariant),
-      AMG_INT(ChebyScale), AMG_INT(SmoothType), AMG_INT(SmoothNumLevels), AMG_INT(SmoothNumSweeps),
-      AMG_INT(ILUType), AMG_INT(ILULevel), AMG_INT(ILUMaxIter), AMG_DBL(ILUDroptol),
-      AMG_INT(FSAIMaxSteps), AMG_INT(FSAIMaxStepSize), AMG_DBL(FSAIKapTolerance),
-      // systems
-      AMG_INT(NumFunctions), AMG_INT(Nodal), AMG_INT(NodalDiag),
-      // Galerkin product / misc
-      AMG_INT(KeepTranspose), AMG_INT(RAP2), AMG_INT(ModuleRAP2), AMG_DBL(ADropTol), AMG_INT(ADropType),
-      AMG_INT(PrintLevel), AMG_INT(MaxIter), AMG_DBL(Tol),
-  };
-  return t;
+#include "hypre_params.inc"
+
+// "Name" or "Name:k" -> table lookup + call. Errors name the parameter.
+void set_param(const ParamTable& t, const char* what, HYPRE_Solver s, const std::string& key,
+               const std::string& value) {
+  std::string name = key;
+  HYPRE_Int k = 0;
+  auto colon = key.find(':');
+  if (colon != std::string::npos) { name = key.substr(0, colon); k = to_int(key.substr(colon + 1)); }
+  auto it = t.find(name);
+  if (it == t.end()) throw std::runtime_error(std::string("unknown ") + what + " parameter '" + name + "'");
+  if (it->second.indexed != (colon != std::string::npos))
+    throw std::runtime_error(std::string(what) + " parameter '" + name + "' " +
+                             (it->second.indexed ? "needs an index: '" + name + ":k'" : "takes no index"));
+  try {
+    check(it->second.set(s, value, k), name.c_str());
+  } catch (std::invalid_argument&) {
+    throw std::runtime_error(std::string(what) + " parameter '" + key + "': bad value '" + value + "'");
+  }
+}
+void set_amg_param(HYPRE_Solver amg, const std::string& key, const std::string& value) {
+  set_param(amg_table(), "BoomerAMG", amg, key, value);
 }
 
 // ---------------------------------------------------------------- Krylov wrappers
+// Every ParCSR Krylov solver hypre provides: deck `solver:` = pcg | gmres | fgmres | lgmres |
+// cogmres | bicgstab. X(deck name, hypre name).
+#define SMA_KRYLOV(X) X(pcg, PCG) X(gmres, GMRES) X(fgmres, FlexGMRES) X(lgmres, LGMRES) X(cogmres, COGMRES) \
+  X(bicgstab, BiCGSTAB)
+
 struct Krylov {
   std::string name;
   HYPRE_Solver s = nullptr;
   void create() {
-    if (name == "pcg") check(HYPRE_ParCSRPCGCreate(MPI_COMM_WORLD, &s), "PCGCreate");
-    else if (name == "gmres") check(HYPRE_ParCSRGMRESCreate(MPI_COMM_WORLD, &s), "GMRESCreate");
-    else if (name == "fgmres") check(HYPRE_ParCSRFlexGMRESCreate(MPI_COMM_WORLD, &s), "FlexGMRESCreate");
-    else if (name == "bicgstab") check(HYPRE_ParCSRBiCGSTABCreate(MPI_COMM_WORLD, &s), "BiCGSTABCreate");
-    else throw std::runtime_error("unknown hypre solver " + name);
+#define X(n, H) if (name == #n) { check(HYPRE_ParCSR##H##Create(MPI_COMM_WORLD, &s), #H "Create"); return; }
+    SMA_KRYLOV(X)
+#undef X
+    throw std::runtime_error("unknown hypre solver '" + name + "' (pcg gmres fgmres lgmres cogmres bicgstab)");
   }
   void destroy() {
     if (!s) return;
-    if (name == "pcg") HYPRE_ParCSRPCGDestroy(s);
-    else if (name == "gmres") HYPRE_ParCSRGMRESDestroy(s);
-    else if (name == "fgmres") HYPRE_ParCSRFlexGMRESDestroy(s);
-    else HYPRE_ParCSRBiCGSTABDestroy(s);
+#define X(n, H) if (name == #n) HYPRE_ParCSR##H##Destroy(s);
+    SMA_KRYLOV(X)
+#undef X
     s = nullptr;
   }
   void set(const std::string& k, const std::string& v) {
-    auto I = [&] { return (HYPRE_Int)std::stoi(v); };
-    auto D = [&] { return (HYPRE_Real)std::stod(v); };
-#define KSET(SOLVER, N, CONV) if (k == #N) { check(HYPRE_ParCSR##SOLVER##Set##N(s, CONV()), #SOLVER "Set" #N); return; }
-    if (name == "pcg") {
-      KSET(PCG, Tol, D) KSET(PCG, AbsoluteTol, D) KSET(PCG, MaxIter, I) KSET(PCG, TwoNorm, I)
-      KSET(PCG, RelChange, I) KSET(PCG, Logging, I) KSET(PCG, PrintLevel, I)
-    } else if (name == "gmres") {
-      KSET(GMRES, Tol, D) KSET(GMRES, AbsoluteTol, D) KSET(GMRES, MaxIter, I) KSET(GMRES, KDim, I)
-      KSET(GMRES, MinIter, I) KSET(GMRES, Logging, I) KSET(GMRES, PrintLevel, I)
-    } else if (name == "fgmres") {
-      KSET(FlexGMRES, Tol, D) KSET(FlexGMRES, AbsoluteTol, D) KSET(FlexGMRES, MaxIter, I)
-      KSET(FlexGMRES, KDim, I) KSET(FlexGMRES, MinIter, I) KSET(FlexGMRES, Logging, I) KSET(FlexGMRES, PrintLevel, I)
-    } else {
-      KSET(BiCGSTAB, Tol, D) KSET(BiCGSTAB, AbsoluteTol, D) KSET(BiCGSTAB, MaxIter, I)
-      KSET(BiCGSTAB, MinIter, I) KSET(BiCGSTAB, Logging, I) KSET(BiCGSTAB, PrintLevel, I)
-    }
-#undef KSET
-    throw std::runtime_error("unknown hypre " + name + " solver_param '" + k + "'");
+#define X(n, H) if (name == #n) { set_param(n##_table(), #n, s, k, v); return; }
+    SMA_KRYLOV(X)
+#undef X
   }
   void set_precond(HYPRE_Solver amg) {
-    if (name == "pcg") HYPRE_ParCSRPCGSetPrecond(s, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
-    else if (name == "gmres") HYPRE_ParCSRGMRESSetPrecond(s, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
-    else if (name == "fgmres") HYPRE_ParCSRFlexGMRESSetPrecond(s, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
-    else HYPRE_ParCSRBiCGSTABSetPrecond(s, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
+#define X(n, H) if (name == #n) HYPRE_ParCSR##H##SetPrecond(s, HYPRE_BoomerAMGSolve, HYPRE_BoomerAMGSetup, amg);
+    SMA_KRYLOV(X)
+#undef X
   }
   void setup(HYPRE_ParCSRMatrix A, HYPRE_ParVector b, HYPRE_ParVector x) {
-    if (name == "pcg") check(HYPRE_ParCSRPCGSetup(s, A, b, x), "PCGSetup");
-    else if (name == "gmres") check(HYPRE_ParCSRGMRESSetup(s, A, b, x), "GMRESSetup");
-    else if (name == "fgmres") check(HYPRE_ParCSRFlexGMRESSetup(s, A, b, x), "FlexGMRESSetup");
-    else check(HYPRE_ParCSRBiCGSTABSetup(s, A, b, x), "BiCGSTABSetup");
+#define X(n, H) if (name == #n) check(HYPRE_ParCSR##H##Setup(s, A, b, x), #H "Setup");
+    SMA_KRYLOV(X)
+#undef X
   }
   // Solve errors (e.g. max iterations reached) are reported via convergence, not thrown.
   void solve(HYPRE_ParCSRMatrix A, HYPRE_ParVector b, HYPRE_ParVector x) {
-    if (name == "pcg") HYPRE_ParCSRPCGSolve(s, A, b, x);
-    else if (name == "gmres") HYPRE_ParCSRGMRESSolve(s, A, b, x);
-    else if (name == "fgmres") HYPRE_ParCSRFlexGMRESSolve(s, A, b, x);
-    else HYPRE_ParCSRBiCGSTABSolve(s, A, b, x);
+#define X(n, H) if (name == #n) HYPRE_ParCSR##H##Solve(s, A, b, x);
+    SMA_KRYLOV(X)
+#undef X
     HYPRE_ClearAllErrors();
   }
   int iters() {
-    HYPRE_Int n = -1;
-    if (name == "pcg") HYPRE_ParCSRPCGGetNumIterations(s, &n);
-    else if (name == "gmres") HYPRE_ParCSRGMRESGetNumIterations(s, &n);
-    else if (name == "fgmres") HYPRE_ParCSRFlexGMRESGetNumIterations(s, &n);
-    else HYPRE_ParCSRBiCGSTABGetNumIterations(s, &n);
-    return n;
+    HYPRE_Int it = -1;
+#define X(n, H) if (name == #n) HYPRE_ParCSR##H##GetNumIterations(s, &it);
+    SMA_KRYLOV(X)
+#undef X
+    return it;
   }
   bool converged() {
-    HYPRE_Int c = 0;
+    HYPRE_Int c = 1;  // BiCGSTAB has no getter: validity relies on the true residual anyway
     if (name == "pcg") HYPRE_PCGGetConverged(s, &c);
     else if (name == "gmres") HYPRE_GMRESGetConverged(s, &c);
     else if (name == "fgmres") HYPRE_FlexGMRESGetConverged(s, &c);
-    else return true;  // BiCGSTAB has no getter: rely on the true residual
+    else if (name == "lgmres") HYPRE_LGMRESGetConverged(s, &c);
+    else if (name == "cogmres") HYPRE_COGMRESGetConverged(s, &c);
     return c != 0;
   }
 };
@@ -227,72 +250,76 @@ struct HypreDriver {
 
   Json run(const Request& rq, const Csr& hA, const std::vector<double>& hb) {
     double tol = std::stod(rq.need("tol"));
-    int repeats = std::stoi(rq.get("repeats", "3"));
-    int warmup = std::stoi(rq.get("warmup", "1"));
     auto cfg = read_config_lines(rq.need("config"));
     std::string solver_name;
     for (auto& c : cfg) if (c.section == "solver") solver_name = c.value;
     if (solver_name.empty()) throw std::runtime_error("config has no 'solver' line");
 
-    // Global (backend) settings apply to the whole library: set them before building solvers.
-    for (auto& c : cfg) {
-      if (c.section != "backend_param") continue;
-      int v = std::stoi(c.value);
-      if (c.key == "SpGemmUseVendor") check(HYPRE_SetSpGemmUseVendor(v), "SetSpGemmUseVendor");
-      else if (c.key == "SpMVUseVendor") check(HYPRE_SetSpMVUseVendor(v), "SetSpMVUseVendor");
-      else if (c.key == "UseGpuRand") check(HYPRE_SetUseGpuRand(v), "SetUseGpuRand");
-      else throw std::runtime_error("unknown hypre backend_param '" + c.key + "'");
-    }
+    // Global (backend) settings apply to the whole library and cannot be read back: set them before
+    // building solvers, and ask the dispatcher for a fresh driver afterwards (result key
+    // driver_restart) so that they never leak into the next request.
+    bool global_set = false;
+    for (auto& c : cfg)
+      if (c.section == "backend_param") {
+        global_set = true;
+        set_param(backend_table(), "backend", nullptr, c.key, c.value);
+      }
 
     RunStats st;
+    Measure m(rq);
     MemSampler mem;
     mem.start();
     st.mem_baseline = mem.baseline();
-    for (int r = -warmup; r < repeats; ++r) {
-      Krylov k{solver_name};
-      k.create();
-      HYPRE_Solver amg;
+    std::unique_ptr<Krylov> k;
+    HYPRE_Solver amg = nullptr;
+    bool first = true;
+    auto release = [&] {
+      if (amg) { HYPRE_BoomerAMGDestroy(amg); amg = nullptr; }
+      if (k) { k->destroy(); k.reset(); }
+    };
+    auto setup = [&] {
+      k = std::make_unique<Krylov>(Krylov{solver_name});
+      k->create();
       check(HYPRE_BoomerAMGCreate(&amg), "BoomerAMGCreate");
       HYPRE_BoomerAMGSetTol(amg, 0.0);  // one V-cycle per application (override with MaxIter/Tol)
       HYPRE_BoomerAMGSetMaxIter(amg, 1);
       for (auto& c : cfg) {
-        if (c.section == "solver_param") k.set(c.key, c.value);
-        if (c.section != "precond_param") continue;
-        std::string name = c.key;
-        int lvl = 0;
-        auto colon = name.find(':');
-        if (colon != std::string::npos) { lvl = std::stoi(name.substr(colon + 1)); name = name.substr(0, colon); }
-        auto it = amg_setters().find(name);
-        if (it == amg_setters().end()) throw std::runtime_error("unknown BoomerAMG parameter '" + name + "'");
-        it->second(amg, c.value, lvl);
+        if (c.section == "solver_param") k->set(c.key, c.value);
+        if (c.section == "precond_param") set_amg_param(amg, c.key, c.value);
       }
-      k.set_precond(amg);
+      k->set_precond(amg);
       zero_x();
       cudaDeviceSynchronize();
       double t0 = now();
-      k.setup(A, b, x);
+      k->setup(A, b, x);
       cudaDeviceSynchronize();
-      double ts = now() - t0;
-      t0 = now();
-      k.solve(A, b, x);
+      return now() - t0;
+    };
+    auto solve = [&](int i) {
+      zero_x();
+      cudaDeviceSynchronize();
+      double t0 = now();
+      k->solve(A, b, x);
       cudaDeviceSynchronize();
       double tv = now() - t0;
-      if (r >= 0) {
-        st.t_setup.push_back(ts);
-        st.t_solve.push_back(tv);
-        st.iters = k.iters();
-        st.lib_converged = k.converged();
+      if (i >= 0) {
+        st.iters_all.push_back(k->iters());
+        st.lib_converged = k->converged();
         st.relres_true.push_back(true_relres(hA, x_host(), hb));
-        if (r == 0) complexities(amg, st);
+        if (first) { complexities(amg, st); first = false; }
       }
-      HYPRE_BoomerAMGDestroy(amg);
-      k.destroy();
+      return tv;
+    };
+    try {
+      measure(m, st, setup, solve, release);
+    } catch (std::exception& e) {
+      st.error = e.what();
     }
     mem.stop();
     st.mem_peak = mem.peak();
     Json j;
     fill_result(j, rq, "hypre", HYPRE_RELEASE_VERSION, st, tol);
-    j.str("solver", solver_name);
+    j.str("solver", solver_name).boolean("driver_restart", global_set);
     return j;
   }
 };

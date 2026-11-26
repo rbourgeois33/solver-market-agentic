@@ -3,6 +3,7 @@
 module purge
 module load arch/h100 gcc/13.3.0 cuda/12.8.0 openmpi/4.1.6-cuda cmake/3.31.4 python/3.11.5 2>/dev/null
 export SMA_MACHINE=jean-zay
+export PATH=$(cd $(dirname ${BASH_SOURCE[0]})/../.. && pwd)/bin:$PATH   # sma-tools
 # Module prefixes differ between login and H100 nodes: always derive them from the loaded modules.
 export SMA_GCC_PREFIX=$(dirname $(dirname $(which gcc)))
 export SMA_CUDA_PREFIX=$CUDA_HOME

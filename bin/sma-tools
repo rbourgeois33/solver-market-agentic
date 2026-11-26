@@ -1,0 +1,4 @@
+#!/bin/bash
+# sma-tools from this checkout (no install needed): runs the sma package with the current python.
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m sma.cli "$@"

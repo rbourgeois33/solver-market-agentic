@@ -25,4 +25,6 @@ time spack install --fail-fast || exit 1
 spack find -lv hypre petsc trilinos
 grep -E "64BIT_BLAS" $(spack location -i petsc)/include/petscconf.h
 drivers/build.sh
-echo "build rc=$?"
+rc=$?
+echo "build rc=$rc"
+[ $rc = 0 ] && sma-tools catalog --launcher "srun --ntasks=1 --cpus-per-task=24 --gres=gpu:1"

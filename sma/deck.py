@@ -71,9 +71,15 @@ def validate(d: dict) -> dict:
 
 # ---------------------------------------------------------------- per-library translation
 def _scalar(v) -> str:
+    """hypre value: bool -> 1/0, list -> comma-separated (array setters), else str."""
     if isinstance(v, bool):
         return "1" if v else "0"
-    return str(v)
+    if isinstance(v, (list, tuple)):
+        return ",".join(_scalar(x) for x in v)
+    s = str(v)
+    if any(c.isspace() for c in s):
+        raise SystemExit(f"hypre value {v!r} contains spaces")
+    return s
 
 
 def to_hypre(d: dict, tol: float) -> str:

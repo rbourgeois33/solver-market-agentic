@@ -110,8 +110,34 @@ def load_rhs(spec: str, n: int) -> np.ndarray:
     return read_vec(path)
 
 
-def convert(matrix: str, rhs: str, out: str) -> dict:
+def _source_ids(matrix: str, rhs: str) -> dict:
+    ids = {"source_matrix": str(Path(matrix).resolve()), "source_matrix_sha256": sha256(Path(matrix))}
+    if rhs in ("ones", "zeros"):
+        ids.update(source_rhs=rhs, source_rhs_sha256=None)
+    else:
+        ids.update(source_rhs=str(Path(rhs).resolve()), source_rhs_sha256=sha256(Path(rhs)))
+    return ids
+
+
+def up_to_date(out_dir: Path, ids: dict) -> bool:
+    """True if out_dir already holds this conversion: same sources (by sha256), same rhs, and
+    the binary files still match the checksums recorded at conversion."""
+    try:
+        meta = json.loads((out_dir / "system.json").read_text())
+    except (OSError, ValueError):
+        return False
+    if any(meta.get(k) != v for k, v in ids.items() if k.endswith("sha256") or k == "source_rhs"):
+        return False
+    return all((out_dir / f).exists() and sha256(out_dir / f) == h for f, h in meta.get("sha256", {}).items())
+
+
+def convert(matrix: str, rhs: str, out: str, force: bool = False) -> dict:
     out_dir = Path(out)
+    ids = _source_ids(matrix, rhs)
+    if not force and up_to_date(out_dir, ids):
+        meta = json.loads((out_dir / "system.json").read_text())
+        meta["skipped"] = "already converted from the same sources (use --force to redo)"
+        return meta
     out_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
     A = load_matrix(Path(matrix))
@@ -129,8 +155,7 @@ def convert(matrix: str, rhs: str, out: str) -> dict:
     A2 = read_csr(out_dir / "A.csr", mmap=False)
     t_read_bin = time.perf_counter() - t0
     meta = {
-        "source_matrix": str(Path(matrix).resolve()),
-        "source_rhs": rhs if rhs in ("ones", "zeros") else str(Path(rhs).resolve()),
+        **ids,
         "nrows": int(A2.shape[0]),
         "nnz": int(A2.nnz),
         "sha256": {"A.csr": sha256(out_dir / "A.csr"), "b.vec": sha256(out_dir / "b.vec")},

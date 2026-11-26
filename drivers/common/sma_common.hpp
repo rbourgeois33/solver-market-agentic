@@ -7,7 +7,7 @@
 //   stdout: "DONE <result json path>" after each request
 // Request file: "key value" lines (value = rest of the line):
 //   id, out (result json path), tol (true relative residual target),
-//   repeats (timed setups and solves), warmup (untimed setup+solve first),
+//   warmup (untimed setup + solve first), setup_repeats S, solve_repeats N (see measure()),
 //   plus library-specific keys (config, solver, belos_xml, muelu_xml).
 #pragma once
 
@@ -23,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -282,6 +283,7 @@ inline std::string gpu_name() {
 struct RunStats {
   std::vector<double> t_setup, t_solve;
   std::vector<double> relres_true;
+  std::vector<int> iters_all;
   int iters = -1;
   bool lib_converged = false;
   size_t mem_baseline = 0, mem_peak = 0;
@@ -297,8 +299,14 @@ inline void fill_result(Json& j, const Request& rq, const std::string& lib, cons
   j.str("id", rq.get("id")).str("lib", lib).str("lib_version", lib_version).str("gpu", gpu_name());
   j.boolean("converged", ok).boolean("lib_converged", s.lib_converged).integer("iterations", s.iters);
   j.num("true_relres", rr).num("tol", tol);
+  auto mn = [](const std::vector<double>& v) { return v.empty() ? NAN : *std::min_element(v.begin(), v.end()); };
+  auto mx = [](const std::vector<double>& v) { return v.empty() ? NAN : *std::max_element(v.begin(), v.end()); };
   j.num("t_setup_median", median(s.t_setup)).num("t_solve_median", median(s.t_solve));
+  j.num("t_setup_min", mn(s.t_setup)).num("t_setup_max", mx(s.t_setup));
+  j.num("t_solve_min", mn(s.t_solve)).num("t_solve_max", mx(s.t_solve));
   j.vec("t_setup", s.t_setup).vec("t_solve", s.t_solve);
+  std::vector<double> its(s.iters_all.begin(), s.iters_all.end());
+  j.vec("iterations_all", its);
   j.integer("gpu_mem_baseline_bytes", (long long)s.mem_baseline);
   j.integer("gpu_mem_peak_bytes", (long long)s.mem_peak);
   j.integer("gpu_mem_peak_delta_bytes", (long long)(s.mem_peak - std::min(s.mem_peak, s.mem_baseline)));
@@ -306,6 +314,35 @@ inline void fill_result(Json& j, const Request& rq, const std::string& lib, cons
   j.num("operator_complexity", s.op_complexity).num("grid_complexity", s.grid_complexity);
   j.integer("levels", s.levels);
   j.str("error", s.error);
+}
+
+// ------------------------------------------------------------------ measurement protocol
+// warmup x (setup + solve), untimed; then S timed setups (each a fresh preconditioner; all but
+// the last are released), then N timed solves from x0 = 0 reusing the last setup. The matrix is
+// never reloaded. The true relative residual is checked after every timed solve.
+//   setup()   -> seconds (device synchronized); builds the preconditioner/solver state
+//   solve(i)  -> seconds (device synchronized); i < 0 for warm-up; records iterations / residual
+//   release() -> frees what setup() built; must be safe to call when nothing is built (idempotent)
+struct Measure {
+  int warmup = 1, setups = 1, solves = 10;
+  explicit Measure(const Request& rq)
+      : warmup(std::stoi(rq.get("warmup", "1"))), setups(std::stoi(rq.get("setup_repeats", "1"))),
+        solves(std::stoi(rq.get("solve_repeats", "10"))) {
+    if (setups < 1 || solves < 1 || warmup < 0) throw std::runtime_error("bad repeat counts");
+  }
+};
+template <class Setup, class Solve, class Release>
+void measure(const Measure& m, RunStats& st, Setup setup, Solve solve, Release release) {
+  try {
+    for (int w = 0; w < m.warmup; ++w) { setup(); solve(-1); release(); }
+    for (int s = 0; s < m.setups; ++s) {
+      st.t_setup.push_back(setup());
+      if (s + 1 < m.setups) release();
+    }
+    for (int i = 0; i < m.solves; ++i) st.t_solve.push_back(solve(i));
+  } catch (...) { release(); throw; }
+  release();
+  if (!st.iters_all.empty()) st.iters = *std::max_element(st.iters_all.begin(), st.iters_all.end());
 }
 
 // ------------------------------------------------------------------ server loop

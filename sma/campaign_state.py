@@ -67,7 +67,7 @@ class Campaign:
     @staticmethod
     def init(path: str | Path, system: str, budget: int, tol: float, solves_per_setup: int,
              libs: list[str], krylov: list[str], amg: list[str], mem_limit_gb: float | None,
-             repeats: int, warmup: int) -> "Campaign":
+             setup_repeats: int | None, solve_repeats: int, warmup: int) -> "Campaign":
         d = Path(path).resolve()
         if (d / "campaign.json").exists():
             raise SystemExit(f"{d} already holds a campaign")
@@ -81,7 +81,10 @@ class Campaign:
             "system": str(sysdir), "budget": budget, "tol": tol, "solves_per_setup": solves_per_setup,
             "libs": libs, "krylov": krylov, "amg": amg,
             "mem_limit_bytes": int(mem_limit_gb * 2**30) if mem_limit_gb else None,
-            "repeats": repeats, "warmup": warmup, "created": time.time(),
+            # measurement: warmup x (setup + solve) untimed, then setup_repeats timed setups, then
+            # solve_repeats timed solves on the last setup. Setup is only repeated when it is in the cost.
+            "setup_repeats": setup_repeats if setup_repeats is not None else (1 if solves_per_setup == 0 else 5),
+            "solve_repeats": solve_repeats, "warmup": warmup, "created": time.time(),
         }
         (d / "campaign.json").write_text(json.dumps(params, indent=2) + "\n")
         (d / "journal.jsonl").touch()
@@ -154,7 +157,8 @@ class Campaign:
             (q / sub).mkdir(parents=True, exist_ok=True)
         result_path = rdir / "result.json"
         lines = {"id": rid, "out": str(result_path), "tol": self.params["tol"],
-                 "repeats": self.params["repeats"], "warmup": self.params["warmup"],
+                 "setup_repeats": self.params["setup_repeats"], "solve_repeats": self.params["solve_repeats"],
+                 "warmup": self.params["warmup"],
                  "timeout": int(timeout), **fields}
         tmp = q / "requests" / f".{rid}.tmp"
         tmp.write_text("".join(f"{k} {v}\n" for k, v in lines.items()))

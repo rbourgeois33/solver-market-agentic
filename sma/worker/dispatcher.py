@@ -187,6 +187,8 @@ def main(argv=None):
                     res = json.loads(out.read_text())
                     res["driver_load"] = load_info
                     write_json(out, res)
+                if done is not None and out.exists() and json.loads(out.read_text()).get("driver_restart"):
+                    d.stop()  # the request changed library-global state: fresh driver for the next one
                 if done is None:
                     tail = "\n".join(d.stderr_tail)
                     d.stop()  # timed out or crashed: restart on next request
