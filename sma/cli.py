@@ -99,8 +99,19 @@ def cmd_catalog(a):
 
 
 def cmd_params(a):
+    if a.gpu:
+        from .gpu import show as gpu_show
+        print(gpu_show(a.lib))
+        return
     from .catalog import show
-    print(show(a.lib, a.grep, a.section, a.full))
+    print(show(a.lib, a.grep, a.section, a.full, a.all))
+
+
+def cmd_gpu_check(a):
+    import json
+    from . import deck as deckmod
+    from .gpu import classify
+    print(json.dumps(classify(deckmod.load(a.deck)), indent=1))
 
 
 def main(argv=None):
@@ -171,7 +182,13 @@ def main(argv=None):
     s.add_argument("--section", help="hypre: amg|pcg|gmres|fgmres|bicgstab; muelu: muelu|ifpack2|belos[:Solver]|"
                                      "amesos2; petsc: substring of the help section title")
     s.add_argument("--full", action="store_true", help="full doc text")
+    s.add_argument("--all", action="store_true", help="also options that only exist with host-only types")
+    s.add_argument("--gpu", action="store_true", help="the GPU-support rules (values: gpu / host_only) and evidence")
     s.set_defaults(func=cmd_params)
+
+    s = sub.add_parser("gpu-check", help="classify a deck's values as gpu / host_only / unknown (no run)")
+    s.add_argument("deck")
+    s.set_defaults(func=cmd_gpu_check)
 
     s = sub.add_parser("worker", help="start/stop/status of the GPU bench worker")
     s.add_argument("action", choices=["start", "stop", "status"])

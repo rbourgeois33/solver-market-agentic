@@ -68,17 +68,19 @@ precond_params: {pc_type: gamg, mg_levels_ksp_type: chebyshev, mg_levels_pc_type
 backend_params: {mat_type: aijkokkos, vec_type: kokkos}
 ```
 Misspelled names are reported: hypre driver (unknown setter), MueLu (rejects with "did you mean"), PETSc
-(`unused_options` in the result).
+(`unused_options` in the result). `sma-tools params LIB` lists every accepted parameter (from the installed library).
+GPU only: values that run on the host are refused before running (`sma/gpu_support.yaml`, with evidence; the
+coarsest-level solve is exempt).
 
 ## How a configuration is measured
 
 For each configuration the driver runs, on the matrix already resident on the GPU:
 
 - **1 warm-up** setup + solve (not timed: first-touch allocations, memory pools, JIT, eigenvalue estimates);
-- **R timed repetitions** (default 3, `campaign-init --repeats`), each = a fresh preconditioner **setup** followed
-  by one **solve** from x0 = 0. Setup and solve are both repeated, and each is timed separately
-  (`cudaDeviceSynchronize` / `Kokkos::fence` before stopping each timer).
-- Reported: the **median** of the R setups and the median of the R solves (all R values are kept in the result).
+- **S timed setups** (fresh preconditioner each time, only the last is kept), then **N timed solves** from x0 = 0
+  on it, without reloading anything. Defaults: k = 0 -> S = 1, N = 10; k > 0 -> S = 5, N = 10
+  (`campaign-init --setup-repeats / --solve-repeats`). `cudaDeviceSynchronize` / `Kokkos::fence` before each timer stops.
+- Reported: min / median / max of setups and of solves (all values kept); the **median** is used.
 - **Cost** (what the agent minimises) = `(t_setup + k t_solve) / k` with k = solves per setup;
   k = 0 (default) means the solve time only.
 - **Valid** only if the **true** relative residual ‖b − Ax‖/‖b‖, recomputed on the host from the original matrix
@@ -105,7 +107,7 @@ source machines/jean-zay/env.sh                   # modules, SMA_WORK=$WORK/sma-
 # libraries, once per machine: resolve + download on compil_h100 (internet), BUILD ON AN H100 NODE
 sbatch machines/jean-zay/concretize.slurm
 sbatch machines/jean-zay/build_libs.slurm         # first time only: fills the spack source cache
-sbatch machines/jean-zay/build_libs_gpu.slurm --rebuild   # GPU stack + the 3 drivers, on the GPU node
+sbatch machines/jean-zay/build_libs_gpu.slurm --rebuild   # GPU stack + the 3 drivers + catalogues, on the GPU node
 
 # a system
 sbatch machines/jean-zay/prepare_system.slurm aij.mtx ones $SMA_WORK/data/mysys   # convert + analyze

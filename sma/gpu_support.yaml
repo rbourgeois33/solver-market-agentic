@@ -1,0 +1,90 @@
+# GPU support of option values, with the evidence for each rule (doc quote or source location).
+# Status: gpu (runs on the device) | host_only (runs on the CPU, or needs unified memory) | unknown.
+# Values not covered by a rule are "unknown": allowed, and shown, but without a guarantee.
+# The coarsest-level solve is exempt: it may run on the host (campaign rule), and GPU smoothers
+# may be used there too.
+# Versions this was checked against: hypre 3.2.1, PETSc 3.26.1, Trilinos 17.3.0.
+
+hypre:
+  # precond_params keys (BoomerAMG). "Name:k" keys are matched on Name; see "exempt".
+  rules:
+    CoarsenType:
+      gpu: [8]
+      otherwise: host_only
+      source: &hypre_gpu "hypre manual, BoomerAMG, GPU-supported Options (https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html): 'The currently supported GPU-enabled BoomerAMG options include: Coarsening: PMIS (8) ...'; 'If any selected option lacks GPU support, then unified memory is required' (this build has no unified memory)"
+    InterpType:
+      gpu: [3, 6, 14, 15, 18]
+      otherwise: host_only
+      source: *hypre_gpu
+    AggInterpType:
+      gpu: [4, 5, 6, 7, 8]
+      otherwise: host_only
+      source: *hypre_gpu
+      note: "observed on aij_2592000 (2026-11-26): AggNumLevels 1 + AggInterpType 6 crashed in a host routine; 8 worked"
+    RelaxType:
+      gpu: [3, 4, 6, 7, 11, 12, 16, 18]
+      otherwise: host_only
+      source: *hypre_gpu
+    CycleRelaxType:
+      gpu: [3, 4, 6, 7, 11, 12, 16, 18]
+      otherwise: host_only
+      source: *hypre_gpu
+    RelaxOrder:
+      gpu: [0]
+      otherwise: unknown
+      source: "hypre manual, GPU-supported Options: 'Relaxation order can be 0, lexicographic order, or C/F for (7) and (18)'"
+  exempt: ["CycleRelaxType:3"]     # k = 3: coarsest level
+
+petsc:
+  # keys = PETSc option names without the dash, in solver_params / precond_params / backend_params.
+  # A prefix mg_levels_ or mg_levels_<i>_ applies the same rule to level smoothers; mg_coarse_* is exempt.
+  rules:
+    mat_type:
+      gpu: [aijkokkos, aijcusparse, seqaijkokkos, seqaijcusparse, mpiaijkokkos, mpiaijcusparse]
+      otherwise: host_only
+      source: "PETSc GPU roadmap (https://petsc.org/release/overview/gpu_roadmap/): GPU matrices are MATAIJCUSPARSE / MATAIJKOKKOS"
+    vec_type:
+      gpu: [kokkos, cuda, seqkokkos, seqcuda, mpikokkos, mpicuda]
+      otherwise: host_only
+      source: "PETSc GPU roadmap: Vec status SUPPORTED for CUDA and Kokkos"
+    pc_type:
+      gpu: [none, jacobi, pbjacobi, vpbjacobi, gamg, mg]
+      host_only: [sor, eisenstat]
+      factor: [ilu, icc, lu, cholesky]   # gpu only with <prefix>pc_factor_mat_solver_type in factor_gpu_solvers
+      otherwise: unknown
+      source: "petsc-3.26.1 src/mat/impls/aij/seq/kokkos/aijkok.kokkos.cxx MatSetOps_SeqAIJKokkos: device ops include mult, getdiagonal, product (SpGEMM), lu/ilu/cholesky numeric + solve (MATSOLVERKOKKOS); no sor op, so MatSOR uses the inherited host SeqAIJ kernel. Device code for pbjacobi/vpbjacobi: src/ksp/pc/impls/{pbjacobi,vpbjacobi}/{kokkos,cuda}. GAMG: 'Basic linear algebra GPU implementations enable many solvers, including GAMG and BDDC, to run entirely on the GPU' (gpu_roadmap)"
+    ksp_type:
+      gpu: [cg, pipecg, groppcg, pipecgrr, fcg, pipefcg, cr, pipecr, gmres, fgmres, lgmres, dgmres, pgmres,
+            pipefgmres, gcr, pipegcr, bcgs, ibcgs, fbcgs, fbcgsr, bcgsl, pipebcgs, tfqmr, tcqmr, cgs,
+            richardson, chebyshev, preonly, minres, symmlq]
+      otherwise: unknown
+      source: "these KSP implementations use only Vec/Mat operations (src/ksp/ksp/impls/*), which run on the device for VECKOKKOS / MATAIJKOKKOS (gpu_roadmap); small dense Hessenberg/least-squares work stays on the host by design"
+  factor_gpu_solvers: [kokkos, cusparse]
+  exempt_prefix: "mg_coarse_"
+
+muelu:
+  # Evaluated on EFFECTIVE values (MueLu / Ifpack2 defaults included), per smoother definition
+  # (top level and each "level <i>" sublist; "smoother: type", "smoother: pre type", "smoother: post type").
+  smoother_type_default: RELAXATION
+  smoother_types:
+    CHEBYSHEV: {status: gpu, source: "Trilinos 17.3.0 Ifpack2_Details_Chebyshev_def.hpp:956/1304 apply via Ifpack2::Details::ChebyshevKernel (fused Kokkos kernel); the only host view (line 1112) is a debug-mode diagonal check"}
+    RELAXATION: {status: depends, depends_on: "relaxation: type"}
+    RILUK: {status: depends, depends_on: "fact: type"}
+  relaxation_type_default: "Symmetric Gauss-Seidel"
+  relaxation_type_default_source: "Trilinos 17.3.0 MueLu_ParameterListInterpreter_def.hpp:1009 defaultSmootherParams.set(\"relaxation: type\", \"Symmetric Gauss-Seidel\")"
+  relaxation_types:
+    Jacobi: gpu
+    Richardson: gpu
+    "MT Gauss-Seidel": gpu
+    "MT Symmetric Gauss-Seidel": gpu
+    "Two-stage Gauss-Seidel": gpu
+    "Two-stage Symmetric Gauss-Seidel": gpu
+    "Gauss-Seidel": host_only
+    "Symmetric Gauss-Seidel": host_only
+  relaxation_types_source: "Trilinos 17.3.0 Ifpack2_Relaxation_def.hpp:613-633 (apply): GS and SGS -> ApplyInverseSerialGS (host); MTGS, MTSGS, GS2, SGS2 -> ApplyInverseMTGS_CrsMatrix (KokkosKernels multithreaded/device kernels); JACOBI, RICHARDSON -> multivector operations"
+  fact_type_default: Serial
+  fact_types:
+    KSPILUK: gpu
+    Serial: host_only
+  fact_types_source: "Trilinos 17.3.0 Ifpack2_RILUK_def.hpp:32-33 'Serial, KSPILUK //!< Multicore/GPU KokkosKernels spiluk'; default Serial at line 346"
+  exempt_prefix: "coarse:"

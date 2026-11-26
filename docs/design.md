@@ -28,7 +28,9 @@ reasoning. A benchmark set of reference systems with expert configurations measu
 |---|---|
 | Objective | runtime: cost = (t_setup + k t_solve)/k; k = 0 means t_solve only. Memory is a constraint only. |
 | Validity | true relative residual ‖b − Ax‖/‖b‖ recomputed on the host from the original matrix ≤ tol for every repetition, and peak GPU memory ≤ limit. |
-| Measurement | 1 untimed warm-up, then R repetitions of (fresh setup + one solve from x0 = 0); medians reported, all values kept; device sync before each timer stops. |
+| Measurement | 1 untimed warm-up (setup + solve), then S timed setups (only the last is kept), then N timed solves from x0 = 0 on it; the matrix is never reloaded. Defaults: k = 0 -> S = 1, N = 10; k > 0 -> S = 5, N = 10 (setup is repeated only when it is in the cost). Min / median / max reported, the median is used; device sync before each timer stops; true residual checked after every timed solve. |
+| Parameters | every parameter the installed library documents is accepted; catalogue from the library itself (`sma-tools params`). |
+| GPU only | values that run on the host are refused (`sma/gpu_support.yaml`: rule + evidence per value; unknown = allowed). Exception: the coarsest-level solve (host direct solve or GPU smoother). |
 | Krylov | each library uses its own (Belos, hypre ParCSR solvers, KSP). |
 | Drivers | 3 C++ servers (`drivers/`): load matrix once, serve requests over stdin, write result JSON. |
 | Matrix format | own raw binary CSR (128-byte header, 64-byte aligned arrays: int64 rowptr, int32/64 colind, float64 values); converters from .mtx and PETSc binary. |
@@ -42,7 +44,7 @@ reasoning. A benchmark set of reference systems with expert configurations measu
 | Agent launch (phase 2) | CLI adapters: `--agent claude` runs `claude -p` with a fixed prompt and restricted settings in the campaign directory; `--agent cmd:'<template>'` for any other CLI agent. |
 | Expert data (phase 3) | `bench/` in this repo; the agent is told not to read it and Claude settings deny the path. |
 | Matrix store (phase 3) | public Hugging Face dataset: zstd-compressed binary CSR + manifest with sha256. |
-| Build | spack environment `spack/spack.yaml.in`, pinned versions, overlay repo `spack/repo` for versions newer than spack's recipes. The agent may edit its copy of the environment and must log every change in `build_log.md`. |
+| Build | spack environment `spack/spack.yaml.in`, pinned versions, overlay repo `spack/repo` for versions newer than spack's recipes. The agent does not edit the build: it may write suggestions, which we implement (the recipe converges over time). |
 | Versions | hypre 3.2.1, PETSc 3.26.1 (+kokkos), Trilinos 17.3.0 (Tpetra, MueLu, Belos, Ifpack2, Amesos2; +cusparse, +float), Kokkos / Kokkos Kernels 5.2.2. |
 | BLAS/LAPACK | netlib-lapack (only CPU-side small dense work). |
 | GPUs | 1 GPU / 1 MPI rank in v1; drivers use distributed objects so multi-GPU is a later option. |

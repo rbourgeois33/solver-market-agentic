@@ -126,7 +126,15 @@ def _short(doc: str, full: bool) -> str:
     return doc if full else " ".join(doc.split())[:160]
 
 
-def show(lib: str, grep: str | None = None, section: str | None = None, full: bool = False) -> str:
+def _petsc_host_only_scenario(scen: str) -> bool:
+    from .gpu import rules
+    r = rules()["petsc"]["rules"]["pc_type"]
+    m = re.search(r"-pc_type (\S+)", scen)
+    return bool(m) and m.group(1) in r.get("host_only", [])
+
+
+def show(lib: str, grep: str | None = None, section: str | None = None, full: bool = False,
+         all_: bool = False) -> str:
     p = params_dir() / f"{lib}.json"
     if not p.exists():
         raise SystemExit(f"no catalogue for {lib}: run `sma-tools catalog` after building (GPU node)")
@@ -134,6 +142,8 @@ def show(lib: str, grep: str | None = None, section: str | None = None, full: bo
     rx = re.compile(grep, re.I) if grep else None
     keep = lambda e: rx is None or rx.search(e["name"]) or rx.search(e.get("doc") or "")
     out = []
+    if lib in ("hypre", "muelu"):
+        out.append(f"GPU rules for values (smoothers, coarsening, ...): sma-tools params {lib} --gpu")
     if lib == "hypre":
         out.append("deck key = <Name> (indexed kinds: \"<Name>:k\"); precond_params -> amg, "
                    "solver_params -> the chosen solver. kinds: int real int_k real_k int_array real_array "
@@ -158,9 +168,16 @@ def show(lib: str, grep: str | None = None, section: str | None = None, full: bo
             out.append("amesos2 coarse solvers available: "
                        + ", ".join(k for k, v in d["amesos2_available"].items() if v))
     else:
+        out.append("GPU rules for values (pc_type, ksp_type, mat_type ...): sma-tools params petsc --gpu")
+        hidden = 0
         for e in d["params"]:
+            if not all_ and e["seen_in"] != "all" and all(_petsc_host_only_scenario(x) for x in e["seen_in"]):
+                hidden += 1
+                continue
             if (section is None or section.lower() in e["section"].lower()) and keep(e):
                 ctx = "" if e["seen_in"] == "all" else f"  [with: {'; '.join(e['seen_in'][:3])}" + \
                       (f" +{len(e['seen_in']) - 3}" if len(e["seen_in"]) > 3 else "") + "]"
                 out.append(f"-{e['name']}  default={e['default']}  {_short(e['doc'], full)}{ctx}")
+        if hidden:
+            out.append(f"({hidden} options of host-only PC types hidden; --all to show)")
     return "\n".join(out)
