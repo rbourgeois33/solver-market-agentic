@@ -51,8 +51,9 @@ def settings(cdir: Path, system: Path, mode: str) -> dict:
              "Bash(grep:*)", "Bash(wc:*)"]
     allow += ["Bash(squeue:*)", "Bash(sacct:*)"] if mode == "slurm" else ["Bash(nvidia-smi:*)"]
     for r in read_roots:
-        pat = a(r) + ("/**" if r.suffix == "" else "")
-        allow.append(f"Read({pat})")  # Read rules cover Read, Glob, Grep
+        allow.append(f"Read({a(r)})")  # the path itself (e.g. Grep rooted at a directory)
+        if r.suffix == "":
+            allow.append(f"Read({a(r)}/**)")  # Read rules cover Read, Glob, Grep
     allow.append(f"Edit({a(cdir)}/**)")  # Edit rules cover Edit and Write
     allow += [f"WebFetch(domain:{d})" for d in DOC_DOMAINS]
     record = ["journal.jsonl", "campaign.json", "runs/**", "queue/**", "transcripts/**", ".claude/**"]

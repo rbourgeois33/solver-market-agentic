@@ -81,6 +81,9 @@ def chart(c: Campaign, rows: list[dict], out: Path) -> None:
                            edgecolors=col, linewidths=2, zorder=3)
 
     ax.set_yscale("log")
+    from matplotlib.ticker import LogLocator, FuncFormatter
+    ax.yaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.grid(True, which="major", axis="y", color=GRID, linewidth=1)
     ax.grid(True, which="minor", axis="y", color=GRID, linewidth=0.5, alpha=0.6)
     ax.set_axisbelow(True)
