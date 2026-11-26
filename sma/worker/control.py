@@ -22,7 +22,7 @@ def _info_path(campaign_dir: Path) -> Path:
 
 
 def start(campaign_dir: Path, system: str, mode: str, machine: str | None, time_limit: str,
-          idle_timeout: int) -> dict:
+          idle_timeout: int, exclusive: bool = True) -> dict:
     q = campaign_dir / "queue"
     q.mkdir(parents=True, exist_ok=True)
     (q / "STOP").unlink(missing_ok=True)
@@ -42,11 +42,12 @@ def start(campaign_dir: Path, system: str, mode: str, machine: str | None, time_
         script = REPO_DIR / "machines" / machine / "worker.slurm"
         out = subprocess.run(
             ["timeout", "100", "sbatch", "--parsable", f"--time={time_limit}", f"--output={q}/worker-%j.out",
-             str(script), *cmd],
+             *(["--exclusive"] if exclusive else []), str(script), *cmd],
             cwd=REPO_DIR, capture_output=True, text=True)
         if out.returncode != 0:
             raise SystemExit(f"sbatch failed: {out.stderr.strip()}")
-        info = {"mode": "slurm", "job_id": out.stdout.strip().split(";")[0], "started": time.time()}
+        info = {"mode": "slurm", "job_id": out.stdout.strip().split(";")[0], "started": time.time(),
+                "exclusive": exclusive}
     _info_path(campaign_dir).write_text(json.dumps(info, indent=2) + "\n")
     return info
 

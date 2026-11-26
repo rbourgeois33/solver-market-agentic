@@ -48,6 +48,10 @@ def write_json(path: Path, obj: dict) -> None:
     os.replace(tmp, path)
 
 
+class InfraError(RuntimeError):
+    """Failure of the benchmark infrastructure (driver cannot start), not of the configuration."""
+
+
 class Driver:
     def __init__(self, lib: str, exe: Path, system: Path, queue: Path, launcher: list[str]):
         self.lib, self.exe, self.system, self.queue = lib, exe, system, queue
@@ -126,7 +130,7 @@ def main(argv=None):
     p.add_argument("--system", required=True)
     p.add_argument("--queue", required=True)
     p.add_argument("--bin", required=True, help="directory with sma_hypre, sma_muelu, sma_petsc")
-    p.add_argument("--idle-timeout", type=float, default=1800)
+    p.add_argument("--idle-timeout", type=float, default=1800)  # seconds
     p.add_argument("--launcher", default="",
                    help="prefix for driver processes, e.g. 'srun -n1' inside a Slurm job "
                         "(each driver is its own 1-rank MPI job step; only one runs at a time)")
@@ -173,7 +177,10 @@ def main(argv=None):
                     for other in drivers.values():  # one driver on the GPU at a time
                         if other is not d and other.alive():
                             other.stop()
-                    d.start()
+                    try:
+                        d.start()
+                    except Exception as e:  # not caused by the config: not charged to the budget
+                        raise InfraError(str(e)) from e
                     load_info = json.loads((queue / "drivers" / f"{lib}.json").read_text())
                 done = d.request(req, float(kv.get("timeout", 900)))
                 if load_info is not None and out.exists():
@@ -187,7 +194,7 @@ def main(argv=None):
                                        f"stderr tail:\n{tail}")
             except Exception as e:
                 write_json(out, {"id": kv.get("id", req.stem), "lib": lib, "converged": False,
-                                 "error": str(e)})
+                                 "error": str(e), "infra_error": isinstance(e, InfraError)})
             os.replace(req, queue / "done" / req.name)
             last_activity = time.time()
             state = "idle"

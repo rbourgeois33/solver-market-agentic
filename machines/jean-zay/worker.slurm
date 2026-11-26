@@ -1,5 +1,6 @@
 #!/bin/bash
-# Bench worker on an exclusive H100 node (benchmarks: whole node, no neighbours).
+# Bench worker on an H100 node. `sma-tools worker start` adds --exclusive by default (benchmarks:
+# whole node, no neighbours); --no-exclusive for tests.
 # Submitted by `sma-tools worker start --mode slurm`, which passes --time and the dispatcher command.
 # QoS: qos_gpu_h100-dev allows up to 2 h; longer campaigns need --qos=qos_gpu_h100-t3 (20 h).
 #SBATCH --job-name=sma-worker
@@ -9,7 +10,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --gres=gpu:1
-#SBATCH --exclusive
 #SBATCH --hint=nomultithread
 #SBATCH --qos=qos_gpu_h100-dev
 source machines/jean-zay/env.sh

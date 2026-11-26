@@ -13,6 +13,13 @@ spack:
   - trilinos@17.3.0 +cuda cuda_arch=@CUDA_ARCH@ +wrapper +cusparse +kokkos +mpi +shared
     +tpetra +belos +muelu +ifpack2 +amesos2
     ~anasazi ~sacado ~fortran ~zoltan ~zoltan2
+  packages:
+    all:
+      # OpenBLAS 0.3.33 built here had a misaligned LOAD segment (glibc refuses to load it).
+      # BLAS/LAPACK only serve CPU-side small dense work: the reference implementation is enough.
+      providers:
+        blas: [netlib-lapack]
+        lapack: [netlib-lapack]
   concretizer:
     unify: true
     reuse: false

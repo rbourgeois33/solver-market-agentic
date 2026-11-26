@@ -85,7 +85,9 @@ class Campaign:
         return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
     def used(self) -> int:
-        return len(self.journal())
+        """Budget used: configurations that actually ran. Infrastructure failures (driver could not
+        start, worker down / no answer) are journaled with charged=false and cost nothing."""
+        return sum(1 for e in self.journal() if e.get("charged", True))
 
     def remaining(self) -> int:
         return self.params["budget"] - self.used()
@@ -147,21 +149,25 @@ class Campaign:
         tmp = q / "requests" / f".{rid}.tmp"
         tmp.write_text("".join(f"{k} {v}\n" for k, v in lines.items()))
         os.replace(tmp, q / "requests" / f"{rid}.req")
-        # Budget is spent at submission: a configuration counts even if it fails.
+        # Budget: a configuration that ran counts even if it fails (diverges, crashes, times out);
+        # infrastructure failures (infra_error) do not.
         entry = {"id": rid, "submitted": time.time(), "why": why.strip(), "deck": d}
         hb = q / "heartbeat.json"
         t_end = time.time() + timeout + 120
         while not result_path.exists():
             if time.time() > t_end:
-                res = {"id": rid, "converged": False, "error": "no result: worker down or request timed out"}
+                res = {"id": rid, "converged": False, "infra_error": True,
+                       "error": "no result: worker down or request timed out"}
                 break
             if hb.exists() and json.loads(hb.read_text()).get("state") == "exited":
-                res = {"id": rid, "converged": False, "error": "worker exited (start it with sma-tools worker start)"}
+                res = {"id": rid, "converged": False, "infra_error": True,
+                       "error": "worker exited (start it with sma-tools worker start)"}
                 break
             time.sleep(poll)
         else:
             res = json.loads(result_path.read_text())
         entry["result"] = res
+        entry["charged"] = not res.get("infra_error", False)
         entry["cost"] = self.cost(res)
         mem_ok = True
         lim = self.params["mem_limit_bytes"]
@@ -180,7 +186,8 @@ def short(entry: dict, campaign: Campaign) -> dict:
     keys = ("converged", "lib_converged", "iterations", "true_relres", "t_setup_median", "t_solve_median",
             "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity", "levels", "error",
             "unused_options", "unused_muelu_params", "converged_reason")
-    out = {"id": entry["id"], "valid": entry["valid"], "cost_s": entry["cost"], "mem_ok": entry["mem_ok"]}
+    out = {"id": entry["id"], "valid": entry["valid"], "charged": entry.get("charged", True),
+           "cost_s": entry["cost"], "mem_ok": entry["mem_ok"]}
     out.update({k: r[k] for k in keys if k in r and r[k] not in ("", None)})
     best = campaign.best()
     out["best_so_far"] = {"id": best["id"], "cost_s": best["cost"]} if best else None

@@ -69,7 +69,8 @@ def cmd_worker(a):
     from .worker import control
     c = _campaign(a)
     if a.action == "start":
-        r = control.start(c.dir, c.params["system"], a.mode, a.machine, a.time, a.idle_timeout)
+        r = control.start(c.dir, c.params["system"], a.mode, a.machine, a.time, a.idle_timeout,
+                          exclusive=not a.no_exclusive)
     elif a.action == "stop":
         r = control.stop(c.dir)
     else:
@@ -133,6 +134,8 @@ def main(argv=None):
     s.add_argument("--machine", default=None)
     s.add_argument("--time", default="02:00:00", help="slurm time limit")
     s.add_argument("--idle-timeout", type=int, default=1800)
+    s.add_argument("--no-exclusive", action="store_true",
+                   help="share the node (tests only; benchmarks are exclusive by default)")
     s.set_defaults(func=cmd_worker)
 
     a = p.parse_args(argv)
