@@ -18,6 +18,6 @@ for lib in $libs; do
   echo "=== $lib (prefix $pfx)"
   cmake -S $here/$lib -B $bdir -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$pfx" \
         -DCMAKE_INSTALL_PREFIX=$SMA_WORK $extra || { rc=1; continue; }
-  cmake --build $bdir -j 8 && cmake --install $bdir || rc=1
+  cmake --build $bdir -j 16 && cmake --install $bdir || rc=1
 done
 exit $rc

@@ -88,17 +88,17 @@ struct PetscDriver {
         ck(KSPSetTolerances(ksp, tol, PETSC_CURRENT, PETSC_CURRENT, PETSC_CURRENT), "KSPSetTolerances");
         ck(KSPSetFromOptions(ksp), "KSPSetFromOptions");  // options override the default rtol
         ck(VecSet(x, 0.0), "VecSet");
-        ck(PetscDeviceContextSynchronize(nullptr), "sync");
+        cudaDeviceSynchronize();
         double t0 = now();
         ck(KSPSetUp(ksp), "KSPSetUp");
         PC pc;
         ck(KSPGetPC(ksp, &pc), "KSPGetPC");
         ck(PCSetUp(pc), "PCSetUp");
-        ck(PetscDeviceContextSynchronize(nullptr), "sync");
+        cudaDeviceSynchronize();
         double ts = now() - t0;
         t0 = now();
         ck(KSPSolve(ksp, b, x), "KSPSolve");
-        ck(PetscDeviceContextSynchronize(nullptr), "sync");
+        cudaDeviceSynchronize();
         double tv = now() - t0;
         if (r >= 0) {
           st.t_setup.push_back(ts);
