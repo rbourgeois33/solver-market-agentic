@@ -16,6 +16,7 @@ for lib in $libs; do
            extra="-DCMAKE_CXX_COMPILER=$(spack location -i kokkos-nvcc-wrapper)/bin/nvcc_wrapper" ;;
   esac
   echo "=== $lib (prefix $pfx)"
+  rm -rf $bdir   # always configure from scratch: library prefixes change when the env is rebuilt
   cmake -S $here/$lib -B $bdir -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$pfx" \
         -DCMAKE_INSTALL_PREFIX=$SMA_WORK -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON $extra || { rc=1; continue; }
   cmake --build $bdir -j 16 && cmake --install $bdir || rc=1
