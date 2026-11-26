@@ -78,6 +78,12 @@ def cmd_worker(a):
     print(json.dumps(r, indent=2))
 
 
+def cmd_report(a):
+    from .report import report
+    png, md = report(str(_campaign(a).dir))
+    print(f"chart: {png}\ntable: {md}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="sma-tools", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -126,6 +132,10 @@ def main(argv=None):
     s = sub.add_parser("status", help="budget and best configuration so far")
     s.add_argument("--campaign")
     s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("report", help="evolution chart (report.png) + ranked table (report.md)")
+    s.add_argument("--campaign")
+    s.set_defaults(func=cmd_report)
 
     s = sub.add_parser("worker", help="start/stop/status of the GPU bench worker")
     s.add_argument("action", choices=["start", "stop", "status"])

@@ -10,7 +10,7 @@ spack:
   - hypre@3.2.1 +cuda cuda_arch=@CUDA_ARCH@ +mpi +shared ~int64 ~fortran
   - petsc@3.26.1 +cuda cuda_arch=@CUDA_ARCH@ +kokkos +mpi +shared ~fortran ~examples ~hypre ~hdf5
   # Trilinos 17 dropped Epetra/AztecOO/ML/Ifpack/Amesos: do not name their variants (they pin @:16).
-  - trilinos@17.3.0 +cuda cuda_arch=@CUDA_ARCH@ +wrapper +cusparse +kokkos +mpi +shared
+  - trilinos@17.3.0 +cuda cuda_arch=@CUDA_ARCH@ +wrapper +cusparse +kokkos +mpi +shared +float
     +tpetra +belos +muelu +ifpack2 +amesos2
     ~anasazi ~sacado ~fortran ~zoltan ~zoltan2
   packages:
