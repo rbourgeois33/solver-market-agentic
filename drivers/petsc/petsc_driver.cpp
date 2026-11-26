@@ -59,6 +59,9 @@ struct PetscDriver {
     int warmup = std::stoi(rq.get("warmup", "1"));
     std::ifstream in(rq.need("config"));
     std::string opts((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // PetscOptionsInsertString splits on spaces only: a newline would end up inside the last value.
+    for (char& c : opts)
+      if (c == '\n' || c == '\r' || c == '\t') c = ' ';
 
     ck(PetscOptionsClear(nullptr), "PetscOptionsClear");
     ck(PetscOptionsInsertString(nullptr, opts.c_str()), "PetscOptionsInsertString");

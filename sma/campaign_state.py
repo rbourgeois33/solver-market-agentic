@@ -189,6 +189,9 @@ def short(entry: dict, campaign: Campaign) -> dict:
     out = {"id": entry["id"], "valid": entry["valid"], "charged": entry.get("charged", True),
            "cost_s": entry["cost"], "mem_ok": entry["mem_ok"]}
     out.update({k: r[k] for k in keys if k in r and r[k] not in ("", None)})
+    err = out.get("error")
+    if err and len(err) > 1200:  # e.g. MueLu dumps all valid parameters; full text stays in result.json
+        out["error"] = err[:500] + "\n[... truncated, see runs/<id>/result.json ...]\n" + err[-600:]
     best = campaign.best()
     out["best_so_far"] = {"id": best["id"], "cost_s": best["cost"]} if best else None
     out["budget_remaining"] = campaign.remaining()

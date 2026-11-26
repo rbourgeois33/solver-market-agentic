@@ -147,5 +147,5 @@ def translate(d: dict, tol: float, out_dir: Path) -> dict:
         return {"lib": lib, "solver": name, "belos_xml": str(out_dir / "belos.xml"),
                 "muelu_xml": str(out_dir / "muelu.xml")}
     opts = to_petsc(d, tol)
-    (out_dir / "petsc.opts").write_text(opts + "\n")
+    (out_dir / "petsc.opts").write_text(opts)  # no trailing newline (PETSc splits on spaces only)
     return {"lib": lib, "config": str(out_dir / "petsc.opts")}
