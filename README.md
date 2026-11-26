@@ -19,10 +19,10 @@ drivers (persistent servers), YAML decks, `sma-tools run` with budget and journa
 ## Quick start (Jean Zay)
 ```bash
 source machines/jean-zay/env.sh                  # modules + SMA_WORK + spack
-# libraries (once per machine): concretize, then build, both on compil_h100
+# libraries (once per machine): fetch+concretize on compil_h100 (internet), build ON an H100 node
 sbatch machines/jean-zay/concretize.slurm
-sbatch machines/jean-zay/build_libs.slurm
-drivers/build.sh                                 # in a job on compil_h100 / an H100 node
+sbatch machines/jean-zay/build_libs.slurm        # first time: downloads sources into the spack cache
+sbatch machines/jean-zay/build_libs_gpu.slurm --rebuild   # rebuild GPU stack + drivers on the H100 node
 
 # a system: matrix + rhs -> fast binary (+ provenance, sha256)
 sma-tools convert --matrix aij.mtx --rhs ones --out $SMA_WORK/data/mysys

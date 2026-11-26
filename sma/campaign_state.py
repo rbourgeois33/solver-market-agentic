@@ -185,7 +185,7 @@ def short(entry: dict, campaign: Campaign) -> dict:
     r = entry["result"]
     keys = ("converged", "lib_converged", "iterations", "true_relres", "t_setup_median", "t_solve_median",
             "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity", "levels", "error",
-            "unused_options", "unused_muelu_params", "converged_reason")
+            "unused_options", "converged_reason", "driver_load")
     out = {"id": entry["id"], "valid": entry["valid"], "charged": entry.get("charged", True),
            "cost_s": entry["cost"], "mem_ok": entry["mem_ok"]}
     out.update({k: r[k] for k in keys if k in r and r[k] not in ("", None)})

@@ -6,7 +6,10 @@
 #include <BelosSolverFactory.hpp>
 #include <BelosTpetraAdapter.hpp>
 #include <MueLu_CreateTpetraPreconditioner.hpp>
+#include <MueLu_Hierarchy.hpp>
+#include <MueLu_Level.hpp>
 #include <MueLu_TpetraOperator.hpp>
+#include <Xpetra_Matrix.hpp>
 #include <Teuchos_XMLParameterListHelpers.hpp>
 #include <Tpetra_Core.hpp>
 #include <Tpetra_CrsMatrix.hpp>
@@ -60,6 +63,27 @@ struct MueLuDriver {
     Kokkos::fence();
   }
 
+  // Operator / grid complexity from the level matrices. (Hierarchy::GetOperatorComplexity returns 0
+  // when coarse operators have no global constants computed, which happens in normal runs.)
+  template <class H>
+  static void complexities(H& h, RunStats& st) {
+    using xmat_t = Xpetra::Matrix<SC, LO, GO, NO>;
+    double nnz = 0, nnz0 = 0, rows = 0, rows0 = 0;
+    int L = h.GetNumLevels();
+    for (int l = 0; l < L; ++l) {
+      auto lvl = h.GetLevel(l);
+      if (!lvl->IsAvailable("A")) break;
+      auto A = Teuchos::rcp_dynamic_cast<xmat_t>(lvl->template Get<Teuchos::RCP<Xpetra::Operator<SC, LO, GO, NO>>>("A"));
+      if (A.is_null()) break;
+      double z = (double)A->getLocalNumEntries(), r = (double)A->getLocalNumRows();  // 1 rank in v1
+      if (l == 0) { nnz0 = z; rows0 = r; }
+      nnz += z; rows += r;
+    }
+    st.levels = L;
+    st.op_complexity = nnz0 > 0 ? nnz / nnz0 : NAN;
+    st.grid_complexity = rows0 > 0 ? rows / rows0 : NAN;
+  }
+
   std::vector<double> x_host() {
     auto xv = X->getLocalViewHost(Tpetra::Access::ReadOnly);
     std::vector<double> hx(xv.extent(0));
@@ -80,7 +104,6 @@ struct MueLuDriver {
     MemSampler mem;
     mem.start();
     st.mem_baseline = mem.baseline();
-    std::string unused;
     try {
       Belos::SolverFactory<SC, mv_t, op_t> factory;
       for (int r = -warmup; r < repeats; ++r) {
@@ -111,14 +134,7 @@ struct MueLuDriver {
           st.iters = solver->getNumIters();
           st.lib_converged = ret == Belos::Converged;
           st.relres_true.push_back(true_relres(hA, x_host(), hb));
-          if (r == 0) {
-            auto H = prec->GetHierarchy();
-            st.levels = H->GetNumLevels();
-            st.op_complexity = H->GetOperatorComplexity();
-            // Parameters MueLu never read: typos or options that do not apply.
-            for (auto it = muelu_params->begin(); it != muelu_params->end(); ++it)
-              if (!muelu_params->entry(it).isUsed()) unused += (unused.empty() ? "" : "; ") + muelu_params->name(it);
-          }
+          if (r == 0) complexities(*prec->GetHierarchy(), st);
         }
       }
     } catch (std::exception& e) {
@@ -128,7 +144,7 @@ struct MueLuDriver {
     st.mem_peak = mem.peak();
     Json j;
     fill_result(j, rq, "muelu", TRILINOS_VERSION_STRING, st, tol);
-    j.str("solver", solver_name).str("prec_side", side).str("unused_muelu_params", unused);
+    j.str("solver", solver_name).str("prec_side", side);
     return j;
   }
 };

@@ -96,7 +96,9 @@ Phase 3: HF dataset uploader/downloader, `bench/` schema + expert decks (from TR
   `kokkos+cuda_lambda` requirement no longer exists in Kokkos 5.
 - Trilinos 17 removed Epetra/AztecOO/ML/Ifpack/Amesos: never name those variants (they pin @:16).
   Tpetra stack only. `+cusparse`: Kokkos Kernels uses cuSPARSE for SpMV & co.
-- Jean Zay: env rendered and libraries built ON compil_h100 (module paths and CPU target differ
+- Jean Zay: env rendered (concretize) on compil_h100, libraries BUILT ON AN H100 NODE (machines/jean-zay/
+  build_libs_gpu.slurm, decided 2026-11-26): configure test programs that link CUDA need libcuda, absent on
+  compil_h100 (PETSc then assumed 64-bit BLAS indices -> LAPACK crash in GAMG). Formerly: built (module paths and CPU target differ
   from the login node). Spack does not expand env variables in external paths: they are written
   in by `sma-tools spack-env`. `SPACK_PYTHON=/usr/bin/python3` (python/3.11.5 module lacks os.O_PATH).
 - Worker: python dispatcher in the batch step; each driver is its own 1-rank `srun` step, and only
@@ -106,3 +108,11 @@ Phase 3: HF dataset uploader/downloader, `bench/` schema + expert decks (from TR
 - PETSc driver caches one Mat per `mat_type` (default aijkokkos) and reports unused options;
   MueLu driver reports unused ParameterList entries; hypre driver rejects unknown names.
 - True residual computed on the host from the original CSR, independent of the libraries.
+- BLAS/LAPACK = netlib-lapack (spack OpenBLAS 0.3.33 .so had a misaligned LOAD segment).
+- Budget: infrastructure failures (driver cannot start, worker down / no answer) are journaled with
+  charged=false and do not consume budget; anything that ran (diverged, crashed, timed out) does.
+- Drivers keep RPATH (CMAKE_INSTALL_RPATH_USE_LINK_PATH) and are configured from scratch each build.
+- MueLu complexities computed by the driver from level matrices (Hierarchy::GetOperatorComplexity returns 0
+  when coarse operators lack global constants).
+- First real results (aij_2592000, rhs=1, tol 1e-8, H100): hypre GPU defaults == PMIS/ext+i deck
+  (22 its, 46.6 ms solve); MueLu default smoother 4.15 s solve vs Chebyshev 27.5 ms (17 its).
