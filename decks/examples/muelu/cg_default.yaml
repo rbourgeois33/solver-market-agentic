@@ -1,0 +1,4 @@
+comment: Belos CG + MueLu, MueLu defaults (smoothed aggregation).
+lib: muelu
+solver: Pseudoblock CG
+solver_params: {Maximum Iterations: 1000}

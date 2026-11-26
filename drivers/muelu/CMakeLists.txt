@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.24)
+# Configure with -DCMAKE_CXX_COMPILER=<kokkos nvcc_wrapper> (Trilinos was built with it).
+project(sma_muelu_driver CXX)
+find_package(MPI REQUIRED COMPONENTS CXX)
+find_package(CUDAToolkit REQUIRED)
+find_package(OpenMP)
+find_package(Trilinos REQUIRED COMPONENTS MueLu Belos Tpetra Teuchos)
+set(CMAKE_CXX_STANDARD 20)
+add_executable(sma_muelu muelu_driver.cpp)
+target_include_directories(sma_muelu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+target_link_libraries(sma_muelu PRIVATE Trilinos::all_selected_libs MPI::MPI_CXX CUDA::cudart $<$<BOOL:${OpenMP_CXX_FOUND}>:OpenMP::OpenMP_CXX>)
+install(TARGETS sma_muelu)

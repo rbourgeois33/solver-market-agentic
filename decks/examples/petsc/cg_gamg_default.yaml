@@ -1,0 +1,6 @@
+comment: KSP CG + GAMG, GAMG defaults, Kokkos (cuSPARSE-backed) matrices on the GPU.
+lib: petsc
+solver: cg
+solver_params: {ksp_max_it: 1000, ksp_norm_type: unpreconditioned}
+precond_params: {pc_type: gamg}
+backend_params: {mat_type: aijkokkos, vec_type: kokkos}

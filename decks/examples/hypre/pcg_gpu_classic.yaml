@@ -1,0 +1,18 @@
+comment: >
+  Typical GPU BoomerAMG: PMIS coarsening, extended+i interpolation (GPU-supported),
+  l1-Jacobi smoothing, truncated interpolation, keep transpose for faster solve-phase restriction.
+lib: hypre
+solver: pcg
+solver_params: {MaxIter: 1000, TwoNorm: 1}
+precond_params:
+  CoarsenType: 8        # PMIS
+  InterpType: 6         # extended+i
+  PMaxElmts: 4
+  StrongThreshold: 0.25
+  RelaxType: 18         # l1-Jacobi
+  NumSweeps: 1
+  AggNumLevels: 0
+  KeepTranspose: 1
+backend_params:
+  SpGemmUseVendor: 0
+  SpMVUseVendor: 1

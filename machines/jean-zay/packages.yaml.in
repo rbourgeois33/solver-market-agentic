@@ -1,0 +1,35 @@
+# Jean Zay (IDRIS) H100 stack: system externals.
+# Template: `sma-tools spack-env` fills @*_PREFIX@ from the SMA_*_PREFIX variables set by
+# machines/jean-zay/env.sh (spack does not expand env variables in external paths), because the
+# arch/h100 module paths differ between the login node and the H100/compil_h100 nodes.
+# => concretize and build ON compil_h100 or an H100 node, never on the login node.
+packages:
+  all:
+    providers:
+      mpi: [openmpi]
+  gcc:
+    externals:
+    - spec: gcc@13.3.0 languages:='c,c++,fortran'
+      prefix: @GCC_PREFIX@
+      # spack 1.x needs explicit compiler paths for a manually declared compiler external.
+      extra_attributes:
+        compilers:
+          c: @GCC_PREFIX@/bin/gcc
+          cxx: @GCC_PREFIX@/bin/g++
+          fortran: @GCC_PREFIX@/bin/gfortran
+    buildable: false
+  cuda:
+    externals:
+    - spec: cuda@12.8.0
+      prefix: @CUDA_PREFIX@
+    buildable: false
+  openmpi:
+    externals:
+    - spec: openmpi@4.1.6 +cuda
+      prefix: @MPI_PREFIX@
+    buildable: false
+  cmake:
+    externals:
+    - spec: cmake@3.31.4
+      prefix: @CMAKE_PREFIX@
+    buildable: false

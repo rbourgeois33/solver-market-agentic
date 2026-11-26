@@ -1,0 +1,15 @@
+comment: Smoothed aggregation with Chebyshev smoothing (GPU-friendly, no triangular solves).
+lib: muelu
+solver: Pseudoblock CG
+solver_params: {Maximum Iterations: 1000}
+precond_params:            # MueLu keys contain ": " -> always quote them in YAML
+  "verbosity": low
+  "multigrid algorithm": sa
+  "aggregation: type": uncoupled
+  "aggregation: drop tol": 0.0
+  "smoother: type": CHEBYSHEV
+  "smoother: params":
+    "chebyshev: degree": 2
+    "chebyshev: ratio eigenvalue": 7.0
+  "coarse: max size": 2000
+  "coarse: type": KLU2

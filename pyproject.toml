@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sma"
+version = "0.1.0"
+description = "solver-market-agentic: tooling for agents that choose and tune GPU AMG preconditioners"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pyyaml"]
+
+[project.optional-dependencies]
+store = ["zstandard", "huggingface_hub"]
+
+[project.scripts]
+sma-tools = "sma.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sma*"]

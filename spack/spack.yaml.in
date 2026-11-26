@@ -1,0 +1,26 @@
+# Template rendered by `sma-tools spack-env` into $SMA_WORK/env/spack.yaml.
+# The CUDA arch comes from the GPU of the benchmark machine (or --cuda-arch).
+# Agents may edit the rendered copy; every change must be logged in build_log.md.
+spack:
+  include:
+  - @MACHINE_PACKAGES@
+  repos:
+    sma: @REPO_DIR@/spack/repo/spack_repo/sma
+  specs:
+  - hypre@3.2.1 +cuda cuda_arch=@CUDA_ARCH@ +mpi +shared ~int64 ~fortran
+  - petsc@3.26.1 +cuda cuda_arch=@CUDA_ARCH@ +kokkos +mpi +shared ~fortran ~examples ~hypre ~hdf5
+  # Trilinos 17 dropped Epetra/AztecOO/ML/Ifpack/Amesos: do not name their variants (they pin @:16).
+  - trilinos@17.3.0 +cuda cuda_arch=@CUDA_ARCH@ +wrapper +cusparse +kokkos +mpi +shared
+    +tpetra +belos +muelu +ifpack2 +amesos2
+    ~anasazi ~sacado ~fortran ~zoltan ~zoltan2
+  concretizer:
+    unify: true
+    reuse: false
+  config:
+    install_tree:
+      root: @SMA_WORK@/install
+    build_stage:
+    - @STAGE_DIR@
+    source_cache: @SMA_WORK@/spack-user/source-cache
+    build_jobs: @BUILD_JOBS@
+  view: @SMA_WORK@/view

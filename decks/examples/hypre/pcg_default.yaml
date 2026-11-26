@@ -1,0 +1,4 @@
+comment: CG + BoomerAMG, every AMG parameter left at the hypre default.
+lib: hypre
+solver: pcg
+solver_params: {MaxIter: 1000, TwoNorm: 1}
