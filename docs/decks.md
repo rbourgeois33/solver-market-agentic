@@ -28,7 +28,9 @@ callbacks) are listed with the reason.
 and evidence in `sma/gpu_support.yaml` (`sma-tools params LIB --gpu`; `sma-tools gpu-check DECK` to
 check without running). Rules apply to effective values, library defaults included (MueLu's default
 smoother is Symmetric Gauss-Seidel, which runs on the host). The coarsest-level solve is exempt: a host
-direct solve or a GPU smoother are both allowed there.
+direct solve or a GPU smoother are both allowed there. Host setup options (e.g. MueLu
+`"aggregation: backend": host`) are refused when the setup is not measured (k = 0). Methods that are clearly
+bad on GPU are ruled out with their evidence (MueLu unsmoothed aggregation, MT Gauss-Seidel).
 
 Stopping: the campaign `--tol` is on the TRUE relative residual ||b-Ax||/||b||, recomputed by the
 driver. If the deck gives no internal tolerance, the campaign tolerance is used for the library's

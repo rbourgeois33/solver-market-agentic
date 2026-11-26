@@ -131,11 +131,11 @@ class Campaign:
         af = amg_family(d)
         if af not in p["amg"]:
             raise deckmod.DeckError(f"AMG family {af} not allowed (allowed: {p['amg']})")
-        from .gpu import host_only
-        bad = host_only(d)
+        from .gpu import refused
+        bad = refused(d, setup_measured=p["solves_per_setup"] > 0)
         if bad:
-            raise deckmod.DeckError("GPU-only campaign: these values run on the host (not charged):\n" + "\n".join(
-                f"  {f['key']} = {f['value']}  {f['note']}\n    evidence: {f['source']}" for f in bad))
+            raise deckmod.DeckError("refused (not charged): host-only or ruled-out values:\n" + "\n".join(
+                f"  {f['key']} = {f['value']}  [{f['status']}] {f['note']}\n    evidence: {f['source']}" for f in bad))
 
     def submit_and_wait(self, deck_path: str, why: str, timeout: float = 900,
                         poll: float = 2.0) -> dict:

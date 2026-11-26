@@ -82,7 +82,10 @@ def prompt(c: Campaign, mode: str, session: int) -> str:
         tol=f"{p['tol']:g}", mem_limit=f"{lim / 2**30:.1f} GiB" if lim else "the GPU capacity",
         objective=objective, libs=", ".join(p["libs"]), krylov=", ".join(p["krylov"]), amg=", ".join(p["amg"]),
         setup_repeats=p["setup_repeats"], solve_repeats=p["solve_repeats"], extra_tools=extra,
-        repo=REPO_DIR, share=sma_work() / "share" / "sma", session_note=note)
+        repo=REPO_DIR, share=sma_work() / "share" / "sma", session_note=note,
+        setup_rule=("The setup is not measured here (k = 0), so it must run on the GPU too: host setup "
+                    "options are refused." if k == 0 else
+                    "The setup is measured (k > 0): setup work on the host is allowed, its time counts."))
 
 
 # ------------------------------------------------------------------ agents

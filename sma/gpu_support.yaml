@@ -88,3 +88,25 @@ muelu:
     Serial: host_only
   fact_types_source: "Trilinos 17.3.0 Ifpack2_RILUK_def.hpp:32-33 'Serial, KSPILUK //!< Multicore/GPU KokkosKernels spiluk'; default Serial at line 346"
   exempt_prefix: "coarse:"
+
+# ---------------------------------------------------------------------------------------------
+# Setup on the host: refused when the setup is not measured (solves per setup k = 0), since a free
+# host setup would hide CPU work; allowed when k > 0 (its time is in the cost).
+setup_rules:
+  muelu:
+    "aggregation: backend":
+      host_only: [host]
+      source: "Trilinos 17.3.0 MueLu_UncoupledAggregationFactory_def.hpp:183-197: \"host\" runs the non-Kokkos aggregation, moving the graph to the host"
+
+# ---------------------------------------------------------------------------------------------
+# Ruled out (decision 2026-11-26): methods that run but are clearly bad on GPU, refused like host-only
+# values (not charged). Evidence: campaign agent-aij2592000 (2D Poisson, 2.6M rows, H100, exclusive node),
+# best valid configuration 22.7 ms per solve.
+ruled_out:
+  muelu:
+    "multigrid algorithm":
+      values: [unsmoothed]
+      evidence: "run 6a029c: unsmoothed aggregation 73 iterations, 81.6 ms (SA: 22-23 iterations, 22.7 ms)"
+    "relaxation: type":
+      values: ["MT Gauss-Seidel", "MT Symmetric Gauss-Seidel"]
+      evidence: "runs 9fe441 (MT Symmetric GS, 309.9 ms) and 019b6f (MT GS pre/post, 203.3 ms): 10-20x slower per sweep than Chebyshev degree 1"

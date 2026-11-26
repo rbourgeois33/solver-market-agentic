@@ -116,11 +116,20 @@ def cmd_params(a):
     print(show(a.lib, a.grep, a.section, a.full, a.all))
 
 
+def cmd_shell(a):
+    from .shell import run
+    raise SystemExit(run(_campaign(a).dir, a.script, a.timeout))
+
+
 def cmd_gpu_check(a):
     import json
     from . import deck as deckmod
+    import os
     from .gpu import classify
-    print(json.dumps(classify(deckmod.load(a.deck)), indent=1))
+    k = 0
+    if a.campaign or os.environ.get("SMA_CAMPAIGN"):
+        k = _campaign(a).params["solves_per_setup"]
+    print(json.dumps(classify(deckmod.load(a.deck), setup_measured=k > 0), indent=1))
 
 
 def main(argv=None):
@@ -201,8 +210,15 @@ def main(argv=None):
     s.add_argument("--gpu", action="store_true", help="the GPU-support rules (values: gpu / host_only) and evidence")
     s.set_defaults(func=cmd_params)
 
-    s = sub.add_parser("gpu-check", help="classify a deck's values as gpu / host_only / unknown (no run)")
+    s = sub.add_parser("shell", help="run a shell script confined to the campaign's decks/ and work/ (loops, sed, ...)")
+    s.add_argument("script")
+    s.add_argument("--campaign")
+    s.add_argument("--timeout", type=float, default=600)
+    s.set_defaults(func=cmd_shell)
+
+    s = sub.add_parser("gpu-check", help="classify a deck's values: gpu / host_only / ruled_out / unknown (no run)")
     s.add_argument("deck")
+    s.add_argument("--campaign", help="campaign (for k: host setup is refused when k = 0); default k = 0")
     s.set_defaults(func=cmd_gpu_check)
 
     s = sub.add_parser("worker", help="start/stop/status of the GPU bench worker")

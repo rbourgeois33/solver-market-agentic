@@ -17,7 +17,8 @@ every parameter. Reason explicitly: each configuration tests a hypothesis, and y
   ranges overlap are a tie: do not draw conclusions from differences inside the noise.
 - GPU only: values that run on the host are refused before running (not charged), see
   `sma-tools params LIB --gpu`. The coarsest-level solve is exempt (host direct solve or GPU smoother
-  are both allowed there).
+  are both allowed there). $setup_rule Some methods that are clearly bad on GPU are ruled out
+  (listed there too, with the evidence).
 
 ## Tools (the only way to benchmark)
 | command | what |
@@ -26,11 +27,15 @@ every parameter. Reason explicitly: each configuration tests a hypothesis, and y
 | `sma-tools params LIB [--grep REGEX] [--section S] [--full]` | every parameter LIB accepts (from the installed library) |
 | `sma-tools params LIB --gpu` | which values run on the GPU, with evidence |
 | `sma-tools gpu-check DECK` | classify a deck's values (no run, no budget) |
+| `sma-tools shell 'SCRIPT'` | any shell script (loops, sed, python...), writable only in `decks/` and `work/`; e.g. generate deck variants in a loop |
 | `sma-tools run DECK --why "hypothesis"` | benchmark one deck: **1 unit of budget**; prints the result |
 | `sma-tools report` | evolution chart + ranked table (`report.png`, `report.md`) |
 | `sma-tools build` | build the libraries + drivers + catalogues on this machine (spack reuses what is installed) |
 | `sma-tools worker status` | state of the GPU worker (managed for you: do not start or stop it) |
 $extra_tools
+The catalogue (`sma-tools params`) lists everything the installed versions accept: before concluding
+that a feature or option is not available, search it (`--grep`).
+
 Before the first run, check that the libraries are built: if `sma-tools params hypre` says there is no
 catalogue, or a run reports that a driver cannot start, run `sma-tools build` (it can take an hour).
 You cannot change the build recipe. If you think it should change (a variant, a version, a patch),

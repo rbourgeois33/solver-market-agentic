@@ -1,6 +1,7 @@
-"""GPU-only rule: classify a deck's option values as gpu / host_only / unknown (sma/gpu_support.yaml).
+"""GPU-only rule: classify a deck's option values as gpu / host_only / unknown (sma/gpu_support.yaml),
+plus ruled-out methods (clearly bad on GPU) and host setup options (refused when k = 0).
 
-`sma-tools run` refuses a deck with a host_only finding (not charged to the budget). The coarsest-
+`sma-tools run` refuses a deck with a host_only or ruled_out finding (not charged to the budget). The coarsest-
 level solve is exempt (it may run on the host). Rules apply to EFFECTIVE values, so library defaults
 that run on the host (e.g. MueLu's default Symmetric Gauss-Seidel smoother) are caught too.
 """
@@ -114,14 +115,63 @@ def _muelu(deck: dict) -> list[dict]:
     return out
 
 
-def classify(deck: dict) -> list[dict]:
-    return {"hypre": _hypre, "petsc": _petsc, "muelu": _muelu}[deck["lib"]](deck)
+def _walk(d: dict, path: str = ""):
+    """(location, key, value) for every leaf of a nested parameter dict."""
+    for k, v in d.items():
+        if isinstance(v, dict):
+            yield from _walk(v, f"{path}{k} / ")
+        else:
+            yield f"{path}{k}", k, v
 
 
-def host_only(deck: dict) -> list[dict]:
+def _extra(deck: dict, setup_measured: bool) -> list[dict]:
+    """Ruled-out methods, and host setup options when the setup is not measured."""
+    R, lib, out = rules(), deck["lib"], []
+    params = {**deck.get("precond_params", {}), **deck.get("solver_params", {})}
+    for loc, k, v in _walk(params):
+        r = R.get("ruled_out", {}).get(lib, {}).get(k)
+        if r and v in r["values"]:
+            out.append(_f(loc, v, "ruled_out", r["evidence"], "ruled out: clearly bad on GPU"))
+        r = R.get("setup_rules", {}).get(lib, {}).get(k)
+        if r and v in r.get("host_only", []):
+            out.append(_f(loc, v, "allowed_setup_cost" if setup_measured else "host_only", r["source"],
+                          "setup on the host" + ("" if setup_measured else
+                                                 ": refused while the setup is not measured (k = 0)")))
+    return out
+
+
+REFUSED = ("host_only", "ruled_out")
+
+
+def classify(deck: dict, setup_measured: bool = False) -> list[dict]:
+    base = {"hypre": _hypre, "petsc": _petsc, "muelu": _muelu}[deck["lib"]](deck)
+    # smoother values already classified: mark ruled-out ones
+    ro = rules().get("ruled_out", {}).get(deck["lib"], {})
+    for f in base:
+        key = f["key"].split(" / ")[-1]
+        if key in ro and f["value"] in ro[key]["values"]:
+            f.update(status="ruled_out", source=ro[key]["evidence"], note="ruled out: clearly bad on GPU")
+    seen = {(f["key"], str(f["value"])) for f in base}
+    return base + [f for f in _extra(deck, setup_measured) if (f["key"], str(f["value"])) not in seen
+                   and not any(f["key"].endswith(b["key"].split(" / ")[-1]) and str(f["value"]) == str(b["value"])
+                               for b in base)]
+
+
+def refused(deck: dict, setup_measured: bool = False) -> list[dict]:
+    return [f for f in classify(deck, setup_measured) if f["status"] in REFUSED]
+
+
+def host_only(deck: dict) -> list[dict]:  # kept for callers that only need the GPU rule
     return [f for f in classify(deck) if f["status"] == "host_only"]
 
 
 def show(lib: str) -> str:
-    """Human-readable GPU rules for one library (sma-tools params LIB --gpu)."""
-    return yaml.safe_dump({lib: rules()[lib]}, sort_keys=False, width=110, allow_unicode=True)
+    """Human-readable rules for one library (sma-tools params LIB --gpu): GPU support of values,
+    host setup options refused when the setup is not measured, ruled-out methods."""
+    R = rules()
+    d = {lib: R[lib]}
+    if lib in R.get("setup_rules", {}):
+        d["setup_on_host (refused when k = 0)"] = R["setup_rules"][lib]
+    if lib in R.get("ruled_out", {}):
+        d["ruled_out (clearly bad on GPU)"] = R["ruled_out"][lib]
+    return yaml.safe_dump(d, sort_keys=False, width=110, allow_unicode=True)

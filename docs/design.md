@@ -30,7 +30,10 @@ reasoning. A benchmark set of reference systems with expert configurations measu
 | Validity | true relative residual ‖b − Ax‖/‖b‖ recomputed on the host from the original matrix ≤ tol for every repetition, and peak GPU memory ≤ limit. |
 | Measurement | 1 untimed warm-up (setup + solve), then S timed setups (only the last is kept), then N timed solves from x0 = 0 on it; the matrix is never reloaded. Defaults: k = 0 -> S = 1, N = 10; k > 0 -> S = 5, N = 10 (setup is repeated only when it is in the cost). Min / median / max reported, the median is used; device sync before each timer stops; true residual checked after every timed solve. |
 | Parameters | every parameter the installed library documents is accepted; catalogue from the library itself (`sma-tools params`). |
-| GPU only | values that run on the host are refused (`sma/gpu_support.yaml`: rule + evidence per value; unknown = allowed). Exception: the coarsest-level solve (host direct solve or GPU smoother). |
+| GPU only | values that run on the host are refused (`sma/gpu_support.yaml`: rule + evidence per value; unknown = allowed). Exception: the coarsest-level solve (host direct solve or GPU smoother). When the setup is not measured (k = 0), host setup options are refused too; when k > 0 they are allowed (their time counts). |
+| Ruled out | methods that run but are clearly bad on GPU, refused with the evidence (our runs): MueLu unsmoothed aggregation, MT Gauss-Seidel smoothers. No runtime host/device-traffic check. |
+| Ordering | the system is benchmarked in the application's ordering: no reordering (RCM etc.), since the application solves in its own ordering. |
+| Agent shell | `sma-tools shell 'SCRIPT'`: shell scripts (loops, sed, python) run under bubblewrap, writable only in the campaign's `decks/` and `work/`, no network; the record stays read-only. (Claude Code's own sandbox needs socat, absent on Jean Zay.) |
 | Krylov | each library uses its own (Belos, hypre ParCSR solvers, KSP). |
 | Drivers | 3 C++ servers (`drivers/`): load matrix once, serve requests over stdin, write result JSON. |
 | Matrix format | own raw binary CSR (128-byte header, 64-byte aligned arrays: int64 rowptr, int32/64 colind, float64 values); converters from .mtx and PETSc binary. |
