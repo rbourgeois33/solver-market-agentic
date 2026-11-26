@@ -15,7 +15,6 @@
 source machines/jean-zay/env.sh
 export OMP_NUM_THREADS=24   # host-side true residual check
 nvidia-smi -q -d CLOCK,PERFORMANCE,COMPUTE | head -60
-# The dispatcher (python) runs in the batch step; it starts each driver as its own
-# `srun --overlap` 1-rank MPI step (mpirun is a stub on Jean Zay).
-export SLURM_OVERLAP=1
+# The dispatcher (python) runs in the batch step; it starts each driver as its own 1-rank
+# `srun` step (mpirun is a stub on Jean Zay). Only one driver step exists at a time.
 exec "$@"

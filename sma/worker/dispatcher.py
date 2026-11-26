@@ -1,5 +1,10 @@
-"""Bench worker: runs on the GPU node, keeps one driver server per library alive (matrix loaded
-once on the GPU) and serves the request queue one request at a time (no concurrent timings).
+"""Bench worker: runs on the GPU node and serves the request queue one request at a time.
+
+Exactly ONE driver server is alive at a time (it owns the whole GPU: no other process holds GPU
+memory or a CUDA context during a measurement). It keeps the matrix loaded across requests for the
+same library; a request for another library stops the current driver and starts the new one
+(reload from the binary file). The load times of a (re)start are added to that request's result
+under "driver_load" so the cost of switching libraries is visible in the journal.
 
 Queue directory layout (shared filesystem between the login node and the GPU node):
   requests/<id>.req   written atomically by `sma-tools run` (tmp + rename)
@@ -123,8 +128,8 @@ def main(argv=None):
     p.add_argument("--bin", required=True, help="directory with sma_hypre, sma_muelu, sma_petsc")
     p.add_argument("--idle-timeout", type=float, default=1800)
     p.add_argument("--launcher", default="",
-                   help="prefix for driver processes, e.g. 'srun --overlap -n1' inside a Slurm job "
-                        "(each driver is its own 1-rank MPI job step)")
+                   help="prefix for driver processes, e.g. 'srun -n1' inside a Slurm job "
+                        "(each driver is its own 1-rank MPI job step; only one runs at a time)")
     a = p.parse_args(argv)
     queue = Path(a.queue)
     for d in ("requests", "done", "results", "drivers"):
@@ -163,9 +168,18 @@ def main(argv=None):
                 if lib not in drivers:
                     raise RuntimeError(f"unknown lib {lib!r}")
                 d = drivers[lib]
+                load_info = None
                 if not d.alive():
+                    for other in drivers.values():  # one driver on the GPU at a time
+                        if other is not d and other.alive():
+                            other.stop()
                     d.start()
+                    load_info = json.loads((queue / "drivers" / f"{lib}.json").read_text())
                 done = d.request(req, float(kv.get("timeout", 900)))
+                if load_info is not None and out.exists():
+                    res = json.loads(out.read_text())
+                    res["driver_load"] = load_info
+                    write_json(out, res)
                 if done is None:
                     tail = "\n".join(d.stderr_tail)
                     d.stop()  # timed out or crashed: restart on next request

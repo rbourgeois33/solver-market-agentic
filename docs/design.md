@@ -99,7 +99,10 @@ Phase 3: HF dataset uploader/downloader, `bench/` schema + expert decks (from TR
 - Jean Zay: env rendered and libraries built ON compil_h100 (module paths and CPU target differ
   from the login node). Spack does not expand env variables in external paths: they are written
   in by `sma-tools spack-env`. `SPACK_PYTHON=/usr/bin/python3` (python/3.11.5 module lacks os.O_PATH).
-- Worker: python dispatcher in the batch step; each driver is its own `srun --overlap` 1-rank step.
+- Worker: python dispatcher in the batch step; each driver is its own 1-rank `srun` step, and only
+  ONE driver is alive at a time (decided 2026-11-26: no --overlap, the measured driver owns the GPU).
+  Switching library = stop current driver + reload from the binary; load times go into the
+  result (`driver_load`) and so into the journal.
 - PETSc driver caches one Mat per `mat_type` (default aijkokkos) and reports unused options;
   MueLu driver reports unused ParameterList entries; hypre driver rejects unknown names.
 - True residual computed on the host from the original CSR, independent of the libraries.

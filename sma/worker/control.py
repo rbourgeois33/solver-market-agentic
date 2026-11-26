@@ -31,8 +31,9 @@ def start(campaign_dir: Path, system: str, mode: str, machine: str | None, time_
     cmd = [sys.executable, "-m", "sma.worker.dispatcher", "--system", system, "--queue", str(q),
            "--bin", str(bindir), "--idle-timeout", str(idle_timeout)]
     if mode == "slurm":
-        # each driver = its own 1-rank MPI step inside the allocation
-        cmd += ["--launcher", "srun --overlap --ntasks=1 --cpus-per-task=24 --gres=gpu:1"]
+        # each driver = its own 1-rank MPI step (mpirun is a stub on Jean Zay); one at a time,
+        # so a plain srun step gets the whole allocation (no --overlap)
+        cmd += ["--launcher", "srun --ntasks=1 --cpus-per-task=24 --gres=gpu:1"]
     if mode == "local":
         log = open(q / "worker.log", "a")
         p = subprocess.Popen(cmd, cwd=REPO_DIR, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
