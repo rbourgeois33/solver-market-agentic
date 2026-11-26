@@ -1,0 +1,6 @@
+#!/bin/bash
+# sma campaign ...: run an agent on a tuning campaign (sma/campaign.py).
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+[ "$1" = campaign ] || { echo "usage: sma campaign DIR [options]  (sma campaign --help)"; exit 2; }
+shift
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m sma.campaign "$@"

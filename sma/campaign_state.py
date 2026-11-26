@@ -172,13 +172,21 @@ class Campaign:
         # infrastructure failures (infra_error) do not.
         entry = {"id": rid, "submitted": time.time(), "why": why.strip(), "deck": d}
         hb = q / "heartbeat.json"
+        req = q / "requests" / f"{rid}.req"
+        # Under `sma campaign` (queue/ORCHESTRATED exists) the orchestrator starts a worker when a
+        # request is pending: wait for it (Slurm queue time included); the timeout counts from pickup.
+        orchestrated = (q / "ORCHESTRATED").exists()
         t_end = time.time() + timeout + 120
         while not result_path.exists():
-            if time.time() > t_end:
+            if orchestrated and req.exists():
+                t_end = time.time() + timeout + 120
+                if not (q / "ORCHESTRATED").exists():
+                    orchestrated = False
+            elif time.time() > t_end:
                 res = {"id": rid, "converged": False, "infra_error": True,
                        "error": "no result: worker down or request timed out"}
                 break
-            if hb.exists() and json.loads(hb.read_text()).get("state") == "exited":
+            if (not orchestrated and hb.exists() and json.loads(hb.read_text()).get("state") == "exited"):
                 res = {"id": rid, "converged": False, "infra_error": True,
                        "error": "worker exited (start it with sma-tools worker start)"}
                 break
@@ -203,6 +211,7 @@ def short(entry: dict, campaign: Campaign) -> dict:
     """Compact view printed to the agent after each run."""
     r = entry["result"]
     keys = ("converged", "lib_converged", "iterations", "true_relres", "t_setup_median", "t_solve_median",
+            "t_setup_min", "t_setup_max", "t_solve_min", "t_solve_max",
             "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity", "levels", "error",
             "unused_options", "converged_reason", "driver_load")
     out = {"id": entry["id"], "valid": entry["valid"], "charged": entry.get("charged", True),

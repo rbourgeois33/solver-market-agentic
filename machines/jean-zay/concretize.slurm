@@ -1,5 +1,6 @@
 #!/bin/bash
-# Render the spack env ON the compil_h100 node (module paths of that node) and concretize only.
+# Render the spack env ON the compil_h100 node (module paths of that node), concretize, and download
+# the sources of everything not yet installed into the spack source cache (GPU nodes are offline).
 # Submit from the repo root: sbatch machines/jean-zay/concretize.slurm
 #SBATCH --job-name=sma-concretize
 #SBATCH --partition=compil_h100
@@ -19,4 +20,10 @@ rc=$?; echo "concretize rc=$rc"
 grep -E "Error|Cannot|Only external" $SMA_WORK/env/concretize.log
 grep -E "^ - |^\[e\]" $SMA_WORK/env/concretize.log | grep -oE "(hypre|petsc|trilinos|kokkos|kokkos-kernels|cuda|openmpi|gcc|cmake)@[^~+ ]+.*target=[a-z0-9_]+" | sed -E 's/(@[^~+ ]+).*(target=[a-z0-9_]+)/\1 \2/' | sort -u
 grep -E "^ - |^\[e\]" $SMA_WORK/env/concretize.log | grep -c "gcc@13.3.0"
+[ $rc = 0 ] || exit $rc
+spack fetch -m > $SMA_WORK/env/fetch.log 2>&1
+rc=$?
+# spack errors out when there is nothing to fetch (everything installed): that is a success here
+grep -q "no uninstalled specs in environment" $SMA_WORK/env/fetch.log && { rc=0; echo "nothing to fetch: all specs installed"; }
+echo "fetch rc=$rc"; tail -3 $SMA_WORK/env/fetch.log
 exit $rc

@@ -9,10 +9,13 @@ Built once per library build (`sma-tools catalog`, on a GPU node: the drivers in
   petsc  : `sma_petsc --catalog`: PETSc's own -help text for every registered KSP type, every PC
            type, and GAMG with level smoothers, on a small matrix; parsed here.
 Stored in $SMA_WORK/share/sma/params/<lib>.json; read by `sma-tools params`.
+The sources of the built versions (user guides included) are extracted from the spack source cache
+into $SMA_WORK/share/sma/src/<lib>-<version>/ for the agent to read offline.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -24,6 +27,68 @@ from . import sma_work
 
 def params_dir() -> Path:
     return sma_work() / "share" / "sma" / "params"
+
+
+def src_dir() -> Path:
+    return sma_work() / "share" / "sma" / "src"
+
+
+# ------------------------------------------------------------------ library sources (offline docs)
+# Extracted from the spack source cache (the exact versions built), for the agent to read:
+# user guides, parameter lists and implementation. Trilinos: only the packages used here.
+SRC_MEMBERS = {"trilinos": ["packages/muelu/", "packages/ifpack2/", "packages/belos/", "packages/amesos2/"]}
+
+
+def _pinned() -> dict[str, tuple[str, str]]:
+    """lib -> (version, sha256) from spack/spack.yaml.in + the overlay package recipes."""
+    from . import REPO_DIR
+    spec = (REPO_DIR / "spack" / "spack.yaml.in").read_text()
+    out = {}
+    for lib in ("hypre", "petsc", "trilinos"):
+        ver = re.search(rf"-\s*{lib}@([\w.]+)", spec).group(1)
+        pkg = (REPO_DIR / "spack" / "repo" / "spack_repo" / "sma" / "packages" / lib / "package.py").read_text()
+        sha = re.search(rf'version\("{re.escape(ver)}",\s*sha256="([0-9a-f]{{64}})"', pkg).group(1)
+        out[lib] = (ver, sha)
+    return out
+
+
+def extract_sources() -> None:
+    import tarfile
+    cache = Path(os.environ.get("SPACK_USER_CONFIG_PATH", sma_work() / "spack-user")) / "source-cache" / "_source-cache" / "archive"
+    for lib, (ver, sha) in _pinned().items():
+        dest = src_dir() / f"{lib}-{ver}"
+        if dest.exists():
+            continue
+        tgz = cache / sha[:2] / f"{sha}.tar.gz"
+        if not tgz.exists():
+            print(f"{lib}: source archive not in the spack cache ({tgz}): skipped")
+            continue
+        keep = SRC_MEMBERS.get(lib)
+        tmp = dest.with_name(dest.name + ".tmp")
+        with tarfile.open(tgz) as t:
+            members = []
+            for m in t:
+                rel = m.name.split("/", 1)[1] if "/" in m.name else ""
+                if not (m.isfile() or m.isdir()) or (keep and not any(rel.startswith(k) for k in keep)):
+                    continue
+                m.name = rel or "."
+                members.append(m)
+            t.extractall(tmp, members=members, filter="data")
+        tmp.rename(dest)
+        print(f"{lib}: sources {dest}")
+
+
+def _muelu_descriptions() -> dict[str, str]:
+    ver = _pinned()["trilinos"][0]
+    xml = src_dir() / f"trilinos-{ver}" / "packages" / "muelu" / "doc" / "UsersGuide" / "masterList.xml"
+    if not xml.exists():
+        return {}
+    out = {}
+    for p in ET.parse(xml).getroot().iter("parameter"):
+        name, desc = p.findtext("name"), p.findtext("description")
+        if name and desc:
+            out[name.strip()] = " ".join(desc.split())
+    return out
 
 
 # ------------------------------------------------------------------ build
@@ -54,8 +119,12 @@ def _muelu(raw: Path) -> dict:
         elif m := re.match(r"^- (.+?) ERROR ", line):
             belos[m.group(1)] = {"error": "not registered in this build"}
     amesos2 = {l.split()[0]: l.split()[1] == "1" for l in (raw / "amesos2.txt").read_text().splitlines()}
+    master = _xml_list(ET.parse(raw / "muelu_master.xml").getroot())
+    desc = _muelu_descriptions()  # MueLu user guide (masterList.xml) of the installed version
+    for e in master:
+        e["doc"] = e["doc"] or desc.get(e["name"], "")
     return {"library": "muelu",
-            "muelu": _xml_list(ET.parse(raw / "muelu_master.xml").getroot()),
+            "muelu": master,
             "ifpack2": _xml_list(ET.parse(raw / "ifpack2.xml").getroot()),
             "belos": belos, "amesos2_available": amesos2}
 
@@ -106,6 +175,7 @@ def _petsc(raw: Path) -> dict:
 def build(launcher: str = "", libs=("hypre", "muelu", "petsc")) -> None:
     pd = params_dir()
     pd.mkdir(parents=True, exist_ok=True)
+    extract_sources()
     bindir = sma_work() / "bin"
     for lib in libs:
         if lib == "hypre":

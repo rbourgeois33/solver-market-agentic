@@ -127,7 +127,7 @@ def table(c: Campaign, rows: list[dict], out: Path, top: int = 15) -> None:
         v = [r for r in rows if r["lib"] == lib and r["valid"]]
         if v:
             b = min(v, key=lambda r: r["cost"])
-            lines.append(f"| {LIB_LABEL[lib]} | {ms(b['cost'])} | {b['its']} | {b['n']} | {b['id']} |")
+            lines.append(f"| {LIB_LABEL[lib]} | {ms(b['cost'])} | {b['its']} | {b['n']} | [{b['id']}](runs/{b['id']}/deck.yaml) |")
     lines += ["", f"## Top {top} configurations", "",
               "| rank | # | library | solver | cost (ms) | setup (ms) | solve (ms) | its | op cx | GPU mem (GB) | why |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -143,7 +143,8 @@ def table(c: Campaign, rows: list[dict], out: Path, top: int = 15) -> None:
             lines.append(f"| {r['n']} | {r['lib']} | {reason.replace('|', '/')} |")
     lines += ["", "## All configurations (submission order)", "",
               "| # | library | cost (ms) | its | id |", "|---|---|---|---|---|"]
-    lines += [f"| {r['n']} | {r['lib']} | {ms(r['cost']) or 'not valid'} | {r['its']} | {r['id']} |" for r in rows]
+    link = lambda i: f"[{i}](runs/{i}/deck.yaml) ([result](runs/{i}/result.json))"
+    lines += [f"| {r['n']} | {r['lib']} | {ms(r['cost']) or 'not valid'} | {r['its']} | {link(r['id'])} |" for r in rows]
     out.write_text("\n".join(lines) + "\n")
 
 

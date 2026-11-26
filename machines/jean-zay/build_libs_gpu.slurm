@@ -27,4 +27,6 @@ grep -E "64BIT_BLAS" $(spack location -i petsc)/include/petscconf.h
 drivers/build.sh
 rc=$?
 echo "build rc=$rc"
-[ $rc = 0 ] && sma-tools catalog --launcher "srun --ntasks=1 --cpus-per-task=24 --gres=gpu:1"
+[ $rc = 0 ] || exit $rc
+sma-tools catalog --launcher "srun --ntasks=1 --cpus-per-task=24 --gres=gpu:1"
+rc=$?; echo "catalog rc=$rc"; exit $rc

@@ -68,7 +68,7 @@ def cmd_status(a):
     c = _campaign(a)
     j = c.journal()
     best = c.best()
-    print(json.dumps({"budget": c.params["budget"], "used": len(j), "remaining": c.remaining(),
+    print(json.dumps({"budget": c.params["budget"], "used": c.used(), "remaining": c.remaining(),
                       "valid_runs": sum(e["valid"] for e in j),
                       "best": short(best, c) if best else None, "params": c.params}, indent=2))
 
@@ -91,6 +91,15 @@ def cmd_report(a):
     from .report import report
     png, md = report(str(_campaign(a).dir))
     print(f"chart: {png}\ntable: {md}")
+
+
+def cmd_build(a):
+    import os
+    from .build import build
+    machine = a.machine or os.environ.get("SMA_MACHINE")
+    if not machine:
+        raise SystemExit("--machine (or SMA_MACHINE) is required")
+    raise SystemExit(build(a.mode, machine, a.rebuild))
 
 
 def cmd_catalog(a):
@@ -170,6 +179,12 @@ def main(argv=None):
     s = sub.add_parser("report", help="evolution chart (report.png) + ranked table (report.md)")
     s.add_argument("--campaign")
     s.set_defaults(func=cmd_report)
+
+    s = sub.add_parser("build", help="build libraries (spack, cache reuse) + drivers + catalogues on this machine")
+    s.add_argument("--mode", choices=["slurm", "local"], default="slurm")
+    s.add_argument("--machine", help="machines/<name> profile (default: $SMA_MACHINE)")
+    s.add_argument("--rebuild", action="store_true", help="uninstall the GPU stack first (needs SMA_ALLOW_REBUILD=1)")
+    s.set_defaults(func=cmd_build)
 
     s = sub.add_parser("catalog", help="build the parameter catalogues from the installed libraries (GPU node)")
     s.add_argument("--launcher", default="", help="prefix for the drivers, e.g. 'srun --ntasks=1' in a Slurm job")

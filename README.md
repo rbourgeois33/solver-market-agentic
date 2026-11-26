@@ -12,7 +12,7 @@ GPU only, portable libraries only:
 | hypre 3.2.1 | BoomerAMG: classical C/F selection | PCG, GMRES, FlexGMRES, BiCGSTAB | CUDA (device memory) |
 | PETSc 3.26.1 | GAMG: aggregation (or classical) | KSP (cg, gmres, ...) | aijkokkos / aijcusparse |
 
-Status: phase 1 (toolbox). Phase 2: `sma campaign` (launching the agent with a fixed prompt). Phase 3: reference
+Status: phase 1 (toolbox) and phase 2 (`sma campaign`: the agent runs the campaign). Phase 3: reference
 systems + expert configurations + scoring.
 Design and every decision taken so far: [docs/design.md](docs/design.md).
 
@@ -37,6 +37,28 @@ Design and every decision taken so far: [docs/design.md](docs/design.md).
 5. `sma-tools run DECK --why "hypothesis"`: one configuration = one unit of budget, appended to `journal.jsonl`.
 6. `sma-tools report`: evolution chart + ranked table.
 7. `sma-tools worker stop` (also happens on idle timeout and Slurm time limit: no orphan GPU job).
+
+## Running a campaign with an agent
+
+```bash
+source machines/jean-zay/env.sh                     # puts sma and sma-tools on PATH
+sma campaign $SMA_WORK/campaigns/c1 --system $SMA_WORK/data/mysys --budget 100 --tol 1e-8 \
+    --agent claude --model <model>                  # or --agent cmd:'mycli --prompt-file {prompt_file}'
+```
+Runs on the login node (cluster) or the GPU machine (`--mode local`). It writes the agent's prompt
+(`prompts/agent.md`, filled in) and permissions (`.claude/settings.json`), then runs agent sessions until the
+agent writes `DONE`, the budget is spent, or 2 sessions in a row make no run (relaunched otherwise, with its
+files). The GPU worker is started when a request is waiting and exits after 10 idle minutes; it is always
+stopped at the end (also on Ctrl-C / errors). The same command resumes an interrupted campaign.
+
+The agent may: run `sma-tools` (not worker start/stop), read-only shell commands, Slurm queries (cluster) or
+`nvidia-smi` (local); read the campaign, the repo docs and decks, the installed libraries and their sources;
+write only in the campaign directory (never the record: `journal.jsonl`, `runs/`, `queue/`); fetch the
+libraries' documentation sites. It cannot change the build: proposals go to `suggestions.md`.
+
+At the end, in the campaign directory: `index.md` (entry point), `report.png` (performance evolution),
+`report.md` (ranking + every configuration, linked to `runs/<id>/`), `best.yaml`, `reasoning.md` (with the
+agent's final summary), `transcripts/`.
 
 ## Decks: one configuration, in each library's own words
 
@@ -104,15 +126,15 @@ inputs given to the library, result.json). The agent's reasoning is in `reasonin
 
 ```bash
 source machines/jean-zay/env.sh                   # modules, SMA_WORK=$WORK/sma-work, spack
-# libraries, once per machine: resolve + download on compil_h100 (internet), BUILD ON AN H100 NODE
-sbatch machines/jean-zay/concretize.slurm
-sbatch machines/jean-zay/build_libs.slurm         # first time only: fills the spack source cache
-sbatch machines/jean-zay/build_libs_gpu.slurm --rebuild   # GPU stack + the 3 drivers + catalogues, on the GPU node
+# libraries + drivers + parameter catalogues: concretize + download on compil_h100 (internet), build on an
+# H100 node; waits for both jobs. spack reuses what is installed.
+sma-tools build
 
 # a system
 sbatch machines/jean-zay/prepare_system.slurm aij.mtx ones $SMA_WORK/data/mysys   # convert + analyze
 
 # a campaign
+# by hand (what the agent does):
 sma-tools campaign-init $SMA_WORK/campaigns/c1 --system $SMA_WORK/data/mysys \
     --budget 100 --tol 1e-8 --solves-per-setup 0 --libs hypre,muelu,petsc
 export SMA_CAMPAIGN=$SMA_WORK/campaigns/c1
@@ -128,7 +150,9 @@ Libraries are built on the GPU node: configure-time test programs that link CUDA
 ## Layout
 
 ```
-sma/             python toolbox (sma-tools)
+bin/             sma (campaign with an agent), sma-tools (toolbox)
+prompts/         agent.md: the agent's instructions (filled in per campaign)
+sma/             python toolbox (sma-tools); campaign.py (sma campaign); gpu_support.yaml (GPU rules)
   csr_io.py        binary CSR / vector format          convert.py   .mtx / PETSc binary -> binary
   analyze.py       matrix properties + hints             deck.py      YAML deck -> native library input
   campaign_state.py budget, journal, cost, run           report.py    chart + table
@@ -138,6 +162,6 @@ drivers/         C++ bench servers: common/ (CSR reader, timers, GPU memory samp
 spack/           spack.yaml.in (pinned versions) + overlay repo (versions newer than spack's builtin recipes)
 machines/        per machine: env.sh, packages.yaml.in (externals), Slurm scripts
 decks/examples/  example decks per library
-docs/            design.md (decisions), decks.md (deck reference)
+docs/            design.md (decisions), decks.md (deck reference), references.md (where parameters are documented)
 bench/           (phase 3) reference systems, expert decks, results
 ```
