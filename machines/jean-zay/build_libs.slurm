@@ -1,6 +1,7 @@
 #!/bin/bash
-# Build the AMG libraries with spack on compil_h100 (internet, no GPU, same CPU as the H100 nodes).
-# Prerequisite: machines/jean-zay/concretize.slurm succeeded (env rendered on that node).
+# First build on compil_h100 (has internet): fills the spack source cache for the offline GPU nodes.
+# The libraries used for benchmarks are then (re)built on a GPU node: build_libs_gpu.slurm --rebuild.
+# Prerequisite: machines/jean-zay/concretize.slurm succeeded.
 # Submit from the repo root: sbatch machines/jean-zay/build_libs.slurm
 #SBATCH --job-name=sma-build
 #SBATCH --partition=compil_h100

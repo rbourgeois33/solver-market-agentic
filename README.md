@@ -12,8 +12,8 @@ GPU only, portable libraries only:
 | hypre 3.2.1 | BoomerAMG: classical C/F selection | PCG, GMRES, FlexGMRES, BiCGSTAB | CUDA (device memory) |
 | PETSc 3.26.1 | GAMG: aggregation (or classical) | KSP (cg, gmres, ...) | aijkokkos / aijcusparse |
 
-Status: **phase 1 (toolbox) done and tested on an H100**. Phase 2 (`sma campaign`: launching the agent with a
-fixed prompt) and phase 3 (reference systems + expert configurations + scoring) are next.
+Status: phase 1 (toolbox). Phase 2: `sma campaign` (launching the agent with a fixed prompt). Phase 3: reference
+systems + expert configurations + scoring.
 Design and every decision taken so far: [docs/design.md](docs/design.md).
 
 ## How a campaign works
@@ -30,7 +30,7 @@ Design and every decision taken so far: [docs/design.md](docs/design.md).
  └──────────────────────────────┘               └─────────────────────────────────────────┘
 ```
 
-1. `sma-tools convert`: matrix + rhs to a raw binary CSR (read in 0.05 s instead of 0.6 s for a 475 MB .mtx).
+1. `sma-tools convert`: matrix + rhs to a raw binary CSR (fast to read, provenance + sha256).
 2. `sma-tools analyze`: symmetry, diagonal, M-matrix pattern, row sums / near-null space, block size -> hints.
 3. `sma-tools campaign-init`: budget, tolerance, cost model, allowed libraries / Krylov / AMG families.
 4. `sma-tools worker start`: the GPU worker (exclusive node by default).
@@ -85,8 +85,7 @@ For each configuration the driver runs, on the matrix already resident on the GP
   (independent of each library's own stopping test), is ≤ tol for every repetition, and peak GPU memory ≤ the limit.
 - Peak GPU memory: sampled every ~1 ms with `cudaMemGetInfo` during setup + solve.
 
-Noise: on a shared node, re-running the same configuration varied by ±3-5%. Rankings closer than that need an
-exclusive node (the default) and more repetitions.
+Benchmarks run on an exclusive node by default (`--no-exclusive` is for tests only).
 
 ## Output
 
@@ -98,16 +97,6 @@ exclusive node (the default) and more repetitions.
 
 The raw record is `journal.jsonl` (deck, hypothesis, full result per configuration) and `runs/<id>/` (deck, native
 inputs given to the library, result.json). The agent's reasoning is in `reasoning.md`.
-
-## First result (2026-11-26, H100, TRUST 2D pressure matrix n = 2.59 M, tol 1e-8, solve time only)
-
-| library | default config | best found | best config |
-|---|---|---|---|
-| MueLu + CG | 4150 ms | **~23 ms** | SA, Chebyshev(1), KLU2 coarse ≤ 2000 rows |
-| hypre PCG + BoomerAMG | 46.6 ms | 36.5 ms | PMIS, ext+i, PMaxElmts 4, Jacobi w = 0.9 |
-| PETSc CG + GAMG | 47.1 ms | 43.2 ms | agg, Chebyshev/Jacobi 2 sweeps |
-
-65 of 100 configurations used (Claude in a session played the agent; phase 2 will automate this).
 
 ## Quick start (Jean Zay)
 
@@ -132,9 +121,7 @@ sma-tools report
 sma-tools worker stop
 ```
 
-Why build on the GPU node: configure-time test programs that link CUDA cannot run without the GPU driver;
-on a GPU-less node PETSc silently assumed 64-bit BLAS integers and crashed later. Jean Zay notes:
-[machines/jean-zay](machines/jean-zay).
+Libraries are built on the GPU node: configure-time test programs that link CUDA need the GPU driver.
 
 ## Layout
 

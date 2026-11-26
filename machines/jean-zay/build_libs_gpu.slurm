@@ -1,6 +1,5 @@
 #!/bin/bash
-# Build the AMG libraries ON an H100 node: configure-time test programs that link CUDA need the
-# GPU driver (libcuda), absent on compil_h100 (PETSc wrongly assumed 64-bit BLAS indices there).
+# Build the AMG libraries and the drivers ON an H100 node (configure tests that link CUDA need the GPU driver).
 # GPU nodes are offline: sources must already be in the spack source cache (fetch on login/compil).
 # Usage (repo root): sbatch machines/jean-zay/build_libs_gpu.slurm [--rebuild]
 #   --rebuild: uninstall the GPU stack first (kokkos/kk, umpire/camp, hypre, petsc, trilinos)

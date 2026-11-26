@@ -1,5 +1,5 @@
 # Source me: Jean Zay H100 environment for solver-market-agentic.
-# Toolchain (decided 2026-11-26): gcc 13.3 + CUDA 12.8 + CUDA-aware OpenMPI 4.1.6.
+# Toolchain: gcc 13.3 + CUDA 12.8 + CUDA-aware OpenMPI 4.1.6.
 module purge
 module load arch/h100 gcc/13.3.0 cuda/12.8.0 openmpi/4.1.6-cuda cmake/3.31.4 python/3.11.5 2>/dev/null
 export SMA_MACHINE=jean-zay
