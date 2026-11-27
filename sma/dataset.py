@@ -71,11 +71,34 @@ def _matrix_name(system: Path, ds: Path) -> str:
 
 
 # ------------------------------------------------------------------ matrices
-def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = "") -> str:
+def _write_mtx_gz(A, out: Path, chunk: int = 4_000_000) -> None:
+    """MatrixMarket coordinate (1-based), gzip, from a CSR matrix, written in chunks of entries."""
+    import numpy as np
+    coo = A.tocoo()
+    tmp = out.with_suffix(".tmp")
+    with gzip.open(tmp, "wb", compresslevel=6) as fo:
+        fo.write(f"%%MatrixMarket matrix coordinate real general\n{A.shape[0]} {A.shape[1]} {A.nnz}\n".encode())
+        for k in range(0, A.nnz, chunk):
+            blk = np.column_stack((coo.row[k:k + chunk] + 1, coo.col[k:k + chunk] + 1, coo.data[k:k + chunk]))
+            np.savetxt(fo, blk, fmt=("%d", "%d", "%.17g"))
+    tmp.replace(out)
+
+
+def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = "",
+               also_from: list[str] | None = None, blocks: str = "") -> str:
+    """Package a converted system. MatrixMarket sources are gzipped as is; other sources (PETSc binary)
+    are written as MatrixMarket from the converted CSR. Matrices are deduplicated on the CSR sha256: an
+    existing entry with the same matrix only gets `also_from` appended."""
     system, ds = Path(system), Path(ds_dir)
     meta = json.loads((system / "system.json").read_text())
     ana = json.loads((system / "analysis.json").read_text()) if (system / "analysis.json").exists() else {}
     name = name or system.name
+    for m in _read_jsonl(ds / "matrices.jsonl"):  # same matrix already in the dataset
+        if m.get("system_sha256", {}).get("A.csr") == meta["sha256"]["A.csr"]:
+            m["also_from"] = sorted(set(m.get("also_from", [])) | {name, *(also_from or [])} - {m["name"]})
+            rows = [x if x["name"] != m["name"] else m for x in _read_jsonl(ds / "matrices.jsonl")]
+            _write_jsonl(ds / "matrices.jsonl", rows)
+            return m["name"]
     mdir = ds / "matrices" / name
     mdir.mkdir(parents=True, exist_ok=True)
     src = Path(meta["source_matrix"])
@@ -93,7 +116,11 @@ def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = 
             out.with_suffix(".tmp").replace(out)
         files["A"] = f"matrices/{name}/A.mtx.gz"
     else:
-        raise SystemExit(f"{src}: only MatrixMarket sources are packaged for now")
+        from .csr_io import read_csr
+        out = mdir / "A.mtx.gz"
+        if not out.exists():
+            _write_mtx_gz(read_csr(system / "A.csr"), out)
+        files["A"] = f"matrices/{name}/A.mtx.gz"
     rhs = meta.get("source_rhs", "ones")
     if rhs in ("ones", "zeros"):
         files["b"] = rhs
@@ -104,8 +131,10 @@ def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = 
                 shutil.copyfileobj(fi, fo, 64 << 20)
         files["b"] = f"matrices/{name}/b.mtx.gz"
     st = ana.get("structure", {})
+    mtx_bytes = src.stat().st_size if src.suffix == ".mtx" else None
     info = {"name": name, "nrows": meta["nrows"], "nnz": meta["nnz"], "origin": origin, "files": files,
-            "source_file": src.name, "mtx_bytes": src.stat().st_size,
+            "blocks": blocks, "also_from": sorted(set(also_from or []) - {name}),
+            "source_file": src.name, "mtx_bytes": mtx_bytes, "mtx_gz_bytes": (mdir / "A.mtx.gz").stat().st_size,
             "system_sha256": meta["sha256"],
             "symmetric": ana.get("symmetry", {}).get("numerically_symmetric"),
             "positive_diagonal": ana.get("diagonal", {}).get("negative_diagonal") == 0 and
@@ -222,7 +251,8 @@ def _card(ds: Path, best: list[dict]) -> str:
                      f"({b['deck_file']}) |")
     lines += ["", "## Matrices", "", "| matrix | rows | nonzeros | MatrixMarket size | origin |", "|---|---|---|---|---|"]
     for m in mats:
-        lines.append(f"| {m['name']} | {m['nrows']:,} | {m['nnz']:,} | {m['mtx_bytes'] / 1e9:.2f} GB | {m['origin']} |")
+        size = f"{m['mtx_bytes'] / 1e9:.2f} GB" if m.get("mtx_bytes") else f"{m.get('mtx_gz_bytes', 0) / 1e9:.2f} GB (gz)"
+        lines.append(f"| {m['name']} | {m['nrows']:,} | {m['nnz']:,} | {size} | {m['origin']} |")
     lines += [
         "", f"{len(runs)} configurations in total, GPUs: {', '.join(gpus)}.", "",
         "## How a configuration is measured", "",

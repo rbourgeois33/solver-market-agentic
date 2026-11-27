@@ -31,25 +31,36 @@ def sha256(path: Path, chunk: int = 1 << 24) -> str:
 
 
 def _petsc_int_width(path: Path, header_n: int, nz: int, nrows: int) -> int:
-    """PETSc binary ints are 32-bit unless PETSc was built with 64-bit indices: infer from size."""
+    """PETSc binary ints are 32-bit unless PETSc was built with 64-bit indices: infer from size. The file
+    may continue after the matrix with other PETSc objects (TRUST's save_matrix_petsc_format appends the
+    right-hand side Vec): then the matrix must be followed by a Vec class id."""
     size = path.stat().st_size
     for w in (4, 8):
-        if size == 4 * w + nrows * w + nz * w + nz * 8:
+        end = 4 * w + nrows * w + nz * w + nz * 8
+        if size == end:
             return w
+        if size > end:
+            with open(path, "rb") as f:
+                f.seek(end)
+                nxt = np.fromfile(f, ">i4" if w == 4 else ">i8", 1)
+            if len(nxt) and int(nxt[0]) == PETSC_VEC_ID:
+                return w
     raise ValueError(f"{path}: size does not match a PETSc AIJ binary with 32 or 64-bit ints")
 
 
 def read_petsc_mat(path: Path) -> sp.csr_matrix:
     with open(path, "rb") as f:
         hdr = np.fromfile(f, ">i4", 4)
-        if hdr[0] != PETSC_MAT_ID:
-            raise ValueError(f"{path}: not a PETSc Mat binary (classid {hdr[0]})")
-        m, n, nz = int(hdr[1]), int(hdr[2]), int(hdr[3])
-        w = _petsc_int_width(path, 4, nz, m)
-        if w == 8:
+        if hdr[0] == PETSC_MAT_ID:  # 32-bit PetscInt header (could still be 64-bit data: checked by size)
+            m, n, nz = int(hdr[1]), int(hdr[2]), int(hdr[3])
+        else:  # PETSc built with 64-bit indices writes the header as int64 (e.g. TRUST)
             f.seek(0)
             hdr = np.fromfile(f, ">i8", 4)
+            if hdr[0] != PETSC_MAT_ID:
+                raise ValueError(f"{path}: not a PETSc Mat binary (classid {hdr[0]})")
             m, n, nz = int(hdr[1]), int(hdr[2]), int(hdr[3])
+        w = _petsc_int_width(path, 4, nz, m)
+        f.seek(4 * w)
         it = ">i4" if w == 4 else ">i8"
         rowlen = np.fromfile(f, it, m).astype(np.int64)
         cols = np.fromfile(f, it, nz)

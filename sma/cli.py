@@ -112,7 +112,8 @@ def cmd_dataset(a):
     from . import sma_work
     a.to = a.to or str(sma_work() / "dataset")
     if a.action == "add-matrix":
-        print("matrix:", D.add_matrix(a.target[0], a.to, a.name, a.origin or ""))
+        print("matrix:", D.add_matrix(a.target[0], a.to, a.name, a.origin or "",
+                                      a.also_from.split(",") if a.also_from else None, a.blocks or ""))
     elif a.action == "add":
         for c in a.target:
             n, x = D.add_campaign(c, a.to)
@@ -226,6 +227,8 @@ def main(argv=None):
     s.add_argument("--to", default=None, help="dataset directory (default: $SMA_WORK/dataset)")
     s.add_argument("--name", help="matrix name in the dataset (add-matrix; default: system dir name)")
     s.add_argument("--origin", help="where the matrix comes from (add-matrix)")
+    s.add_argument("--also-from", help="other sources giving the same matrix, comma-separated (add-matrix)")
+    s.add_argument("--blocks", help="unknown blocks in order, e.g. 'P0 P1' (add-matrix)")
     s.set_defaults(func=cmd_dataset)
 
     s = sub.add_parser("params", help="every parameter a library accepts (names, types, defaults, docs)")
