@@ -10,14 +10,8 @@ Layout of DATASET_DIR (a Hugging Face dataset repository):
                                      info.json (provenance + analysis)
   best/<name>/<gpu>/k<k>_tol<tol>.yaml   the best deck, runnable with sma-tools run
 
-Commands (DIR defaults to $SMA_WORK/dataset):
-  sma-tools dataset new-matrix FILE --type P0P1 --origin TEXT [--blocks TEXT] [--rhs ones|FILE]
-      one compute-node job: convert + analyze into $SMA_WORK/data/<name>, then package into the dataset;
-      name = <prefix>_<type>_<rows> (prefix: --prefix, default trust_vef), e.g. trust_vef_P0P1_2827009
-  sma-tools dataset add CAMPAIGN...   add a campaign's runs (light); `sma campaign --dataset DIR` does it
-  sma-tools dataset build             best.jsonl, best decks, README.md
-  sma-tools dataset publish [--repo]  upload DIR to the Hugging Face dataset repository
-  (add-matrix SYSTEM packages an already converted system)
+Separate from campaigns (a campaign never writes here): `sma-dataset` (sma/dataset_cli.py) adds matrices
+and campaign results, builds the tables and card, and publishes to Hugging Face. See docs/dataset.md.
 
 Best = lowest cost among valid runs.
 """
@@ -158,22 +152,15 @@ def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = 
     return name
 
 
-def matrix_name(path: str, mtype: str, prefix: str = "trust_vef") -> str:
-    """<prefix>_<type>_<rows>, rows read from the file header (MatrixMarket or PETSc binary)."""
-    from .convert import peek_nrows
-    return f"{prefix}_{mtype}_{peek_nrows(Path(path))}"
-
-
-def new_matrix(path: str, mtype: str, origin: str, blocks: str = "", rhs: str = "ones",
-               prefix: str = "trust_vef", ds_dir: str | None = None) -> str:
-    """Convert + analyze + package one matrix (run on a compute node)."""
+def new_matrix(path: str, name: str, origin: str, blocks: str = "", rhs: str = "ones",
+               ds_dir: str | None = None) -> str:
+    """The user's matrix file (MatrixMarket or PETSc binary) -> converted + analyzed system
+    ($SMA_WORK/data/<name>) -> packaged in the dataset. Heavy: run on a compute node."""
     from . import sma_work
-    from .convert import convert
     from .analyze import analyze
-    name = matrix_name(path, mtype, prefix)
+    from .convert import convert, sha256
     system = sma_work() / "data" / name
     convert(path, rhs, str(system))
-    from .convert import sha256
     res = analyze(str(system / "A.csr"))
     res["csr_sha256"] = sha256(system / "A.csr")
     (system / "analysis.json").write_text(json.dumps(res, indent=2) + "\n")

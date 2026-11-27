@@ -1,0 +1,4 @@
+#!/bin/bash
+# sma-dataset ...: the public dataset (sma/dataset_cli.py), separate from campaigns.
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m sma.dataset_cli "$@"

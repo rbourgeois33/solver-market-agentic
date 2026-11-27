@@ -32,8 +32,8 @@ def sha256(path: Path, chunk: int = 1 << 24) -> str:
 
 def _petsc_int_width(path: Path, header_n: int, nz: int, nrows: int) -> int:
     """PETSc binary ints are 32-bit unless PETSc was built with 64-bit indices: infer from size. The file
-    may continue after the matrix with other PETSc objects (TRUST's save_matrix_petsc_format appends the
-    right-hand side Vec): then the matrix must be followed by a Vec class id."""
+    may continue after the matrix with other PETSc objects (some applications append the right-hand side
+    Vec): then the matrix must be followed by a Vec class id."""
     size = path.stat().st_size
     for w in (4, 8):
         end = 4 * w + nrows * w + nz * w + nz * 8
@@ -53,7 +53,7 @@ def read_petsc_mat(path: Path) -> sp.csr_matrix:
         hdr = np.fromfile(f, ">i4", 4)
         if hdr[0] == PETSC_MAT_ID:  # 32-bit PetscInt header (could still be 64-bit data: checked by size)
             m, n, nz = int(hdr[1]), int(hdr[2]), int(hdr[3])
-        else:  # PETSc built with 64-bit indices writes the header as int64 (e.g. TRUST)
+        else:  # PETSc built with 64-bit indices writes the header as int64
             f.seek(0)
             hdr = np.fromfile(f, ">i8", 4)
             if hdr[0] != PETSC_MAT_ID:

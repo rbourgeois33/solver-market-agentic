@@ -159,7 +159,7 @@ class WorkerKeeper(threading.Thread):
 
 
 # ------------------------------------------------------------------ final outputs
-def finalize(c: Campaign, end_reason: str, sessions: list[dict], log, dataset: str | None = None) -> None:
+def finalize(c: Campaign, end_reason: str, sessions: list[dict], log) -> None:
     from .report import report
     try:
         png, md = report(str(c.dir))
@@ -197,14 +197,6 @@ def finalize(c: Campaign, end_reason: str, sessions: list[dict], log, dataset: s
               f"{(s['end'] - s['start']) / 60:.1f} | {s['rc']} | {s['new_runs']} |" for s in sessions]
     (c.dir / "index.md").write_text("\n".join(lines) + "\n")
     log(f"final outputs: {c.dir / 'index.md'}")
-    if dataset:
-        from . import dataset as D
-        try:
-            n, x = D.add_campaign(str(c.dir), dataset)
-            D.build(dataset)
-            log(f"dataset {dataset}: {n} runs added" + (f", {x} excluded" if x else ""))
-        except Exception as e:  # the campaign result stands even if the dataset update fails
-            log(f"dataset {dataset}: NOT updated ({e})")
 
 
 # ------------------------------------------------------------------ main loop
@@ -233,8 +225,6 @@ def main(argv=None) -> int:
     ap.add_argument("--note", help="text added to the agent's prompt in every session (e.g. a target to beat); "
                                    "saved in DIR/note.md, so a resume keeps it")
     ap.add_argument("--max-sessions", type=int, default=20)
-    ap.add_argument("--dataset", help="at the end, add the campaign's runs to this dataset directory "
-                                      "(sma-tools dataset; e.g. $SMA_WORK/dataset)")
     a = ap.parse_args(argv)
 
     cdir = Path(a.dir).resolve()
@@ -343,7 +333,7 @@ def main(argv=None) -> int:
             log(f"worker stop: {control.stop(cdir)}")
         except BaseException as e:
             log(f"worker stop failed: {e} -- check squeue/scancel by hand")
-        finalize(c, end_reason, sessions, log, a.dataset)
+        finalize(c, end_reason, sessions, log)
         log(f"end: {end_reason}")
     return 0
 

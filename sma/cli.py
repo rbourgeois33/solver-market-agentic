@@ -109,48 +109,6 @@ def cmd_catalog(a):
     build(a.launcher, a.libs.split(","), a.parse_only)
 
 
-def cmd_dataset(a):
-    from . import dataset as D
-    from . import sma_work
-    a.to = a.to or str(sma_work() / "dataset")
-    if a.action == "add-matrix":
-        print("matrix:", D.add_matrix(a.target[0], a.to, a.name, a.origin or "",
-                                      a.also_from.split(",") if a.also_from else None, a.blocks or ""))
-    elif a.action == "add":
-        for c in a.target:
-            n, x = D.add_campaign(c, a.to)
-            print(f"{c}: {n} runs added" + (f", {x} excluded (measured something else than their deck)" if x else ""))
-        D.build(a.to)
-    elif a.action == "new-matrix":
-        if not a.type or a.origin is None:
-            raise SystemExit("new-matrix FILE --type P0|P0P1|... --origin TEXT [--blocks TEXT] [--rhs ones|FILE]")
-        f = str(Path(a.target[0]).resolve())
-        if a.here:  # inside the compute-node job
-            print("matrix:", D.new_matrix(f, a.type, a.origin, a.blocks or "", a.rhs, a.prefix, a.to))
-            return
-        import shlex, subprocess
-        from . import REPO_DIR
-        name = D.matrix_name(f, a.type, a.prefix)
-        script = REPO_DIR / "machines" / os.environ.get("SMA_MACHINE", "jean-zay") / "dataset_new_matrix.slurm"
-        args = ["--type", a.type, "--origin", a.origin, "--rhs", a.rhs, "--prefix", a.prefix, "--to", a.to]
-        if a.blocks:
-            args += ["--blocks", a.blocks]
-        out = subprocess.run(["sbatch", "--parsable", f"--job-name=sma-mtx-{name}", str(script), f, *args],
-                             cwd=REPO_DIR, capture_output=True, text=True)
-        if out.returncode:
-            raise SystemExit(out.stderr)
-        print(f"{name}: job {out.stdout.strip()} (log: $SMA_WORK/logs/sma-mtx-{name}-<job>.out)")
-    elif a.action == "publish":
-        repo = a.repo or os.environ.get("SMA_HF_REPO")
-        if not repo:
-            raise SystemExit("--repo (or SMA_HF_REPO) is required")
-        D.publish(a.to, repo)
-    elif a.action == "build":
-        for b in D.build(a.target[0] if a.target else a.to):
-            print(f"{b['matrix']} | {b['gpu']} | k={b['k']} tol={b['tol']:g} | {b['cost_s'] * 1e3:.2f} ms "
-                  f"{b['lib']} ({b['configs_tested']} configs)")
-
-
 def cmd_params(a):
     if a.gpu:
         from .gpu import show as gpu_show
@@ -245,23 +203,6 @@ def main(argv=None):
     s.add_argument("--parse-only", action="store_true",
                    help="rebuild the catalogues from the raw dumps already made (no driver run: no GPU needed)")
     s.set_defaults(func=cmd_catalog)
-
-    s = sub.add_parser("dataset", help="public dataset: matrices + every configuration run + best per GPU")
-    s.add_argument("action", choices=["new-matrix", "add", "build", "publish", "add-matrix"],
-                   help="new-matrix FILE (submits a job: convert, analyze, package); add CAMPAIGN...; build; "
-                        "publish (Hugging Face); add-matrix SYSTEM (package an already converted system)")
-    s.add_argument("target", nargs="*", help="matrix file (new-matrix), system dir (add-matrix), campaigns (add)")
-    s.add_argument("--type", help="new-matrix: unknown types, e.g. P0, P0P1, P0P1Pa (used in the name)")
-    s.add_argument("--prefix", default="trust_vef", help="new-matrix: name prefix (name = PREFIX_TYPE_ROWS)")
-    s.add_argument("--rhs", default="ones", help="new-matrix: ones | zeros | rhs file")
-    s.add_argument("--here", action="store_true", help=argparse.SUPPRESS)
-    s.add_argument("--repo", help="publish: Hugging Face dataset repo (default $SMA_HF_REPO)")
-    s.add_argument("--to", default=None, help="dataset directory (default: $SMA_WORK/dataset)")
-    s.add_argument("--name", help="matrix name in the dataset (add-matrix; default: system dir name)")
-    s.add_argument("--origin", help="where the matrix comes from (add-matrix)")
-    s.add_argument("--also-from", help="other sources giving the same matrix, comma-separated (add-matrix)")
-    s.add_argument("--blocks", help="unknown blocks in order, e.g. 'P0 P1' (add-matrix)")
-    s.set_defaults(func=cmd_dataset)
 
     s = sub.add_parser("params", help="every parameter a library accepts (names, types, defaults, docs)")
     s.add_argument("lib", choices=["hypre", "muelu", "petsc"])
