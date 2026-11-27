@@ -107,6 +107,23 @@ def cmd_catalog(a):
     build(a.launcher, a.libs.split(","), a.parse_only)
 
 
+def cmd_dataset(a):
+    from . import dataset as D
+    from . import sma_work
+    a.to = a.to or str(sma_work() / "dataset")
+    if a.action == "add-matrix":
+        print("matrix:", D.add_matrix(a.target[0], a.to, a.name, a.origin or ""))
+    elif a.action == "add":
+        for c in a.target:
+            n, x = D.add_campaign(c, a.to)
+            print(f"{c}: {n} runs added" + (f", {x} excluded (measured something else than their deck)" if x else ""))
+        D.build(a.to)
+    elif a.action == "build":
+        for b in D.build(a.target[0] if a.target else a.to):
+            print(f"{b['matrix']} | {b['gpu']} | k={b['k']} tol={b['tol']:g} | {b['cost_s'] * 1e3:.2f} ms "
+                  f"{b['lib']} ({b['configs_tested']} configs)")
+
+
 def cmd_params(a):
     if a.gpu:
         from .gpu import show as gpu_show
@@ -201,6 +218,15 @@ def main(argv=None):
     s.add_argument("--parse-only", action="store_true",
                    help="rebuild the catalogues from the raw dumps already made (no driver run: no GPU needed)")
     s.set_defaults(func=cmd_catalog)
+
+    s = sub.add_parser("dataset", help="public dataset: matrices + every configuration run + best per GPU")
+    s.add_argument("action", choices=["add-matrix", "add", "build"],
+                   help="add-matrix SYSTEM (compresses the matrix: compute node); add CAMPAIGN...; build")
+    s.add_argument("target", nargs="*", help="system dir (add-matrix) or campaign dirs (add)")
+    s.add_argument("--to", default=None, help="dataset directory (default: $SMA_WORK/dataset)")
+    s.add_argument("--name", help="matrix name in the dataset (add-matrix; default: system dir name)")
+    s.add_argument("--origin", help="where the matrix comes from (add-matrix)")
+    s.set_defaults(func=cmd_dataset)
 
     s = sub.add_parser("params", help="every parameter a library accepts (names, types, defaults, docs)")
     s.add_argument("lib", choices=["hypre", "muelu", "petsc"])

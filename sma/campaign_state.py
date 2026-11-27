@@ -203,9 +203,28 @@ class Campaign:
             mem_ok = res["gpu_mem_peak_bytes"] <= lim
         entry["mem_ok"] = mem_ok
         entry["valid"] = bool(res.get("converged")) and mem_ok and entry["cost"] is not None
+        wj = self.dir / "queue" / "worker.json"  # node of the worker that ran it (exclusive or shared)
+        try:
+            entry["node"] = {True: "exclusive", False: "shared"}[json.loads(wj.read_text())["exclusive"]]
+        except Exception:
+            entry["node"] = "unknown"
+        entry["sma_commit"] = _git_commit()
         with open(self.dir / "journal.jsonl", "a") as f:
             f.write(json.dumps(entry) + "\n")
         return entry
+
+
+def _git_commit() -> str:
+    import subprocess
+    from . import REPO_DIR
+    try:
+        out = subprocess.run(["git", "-C", str(REPO_DIR), "rev-parse", "--short", "HEAD"], capture_output=True,
+                             text=True, timeout=10).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(REPO_DIR), "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+        return out + ("-dirty" if dirty else "")
+    except Exception:
+        return ""
 
 
 def short(entry: dict, campaign: Campaign) -> dict:

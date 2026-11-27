@@ -103,6 +103,15 @@ setup_rules:
       gpu: [default, vertex based, vertex based bit set, edge filtering, net based bit set, mis2 aggregation, mis2 coarsening]
       default: serial
       source: "Trilinos 17.3.0 MueLu user guide, options.tex table t:coloring_algs: 'serial: Computes a D2 coloring on host, and then does 4-phase aggregation on device' (Parallel: No); MueLu_UncoupledAggregationFactory_def.hpp:528 serial -> KokkosGraph::COLORING_D2_SERIAL; MasterList default \"serial\". GPU alternatives: default (net based bit set on a GPU), vertex based*, edge filtering, net based bit set, mis2 aggregation, mis2 coarsening"
+    "use kokkos refactor":
+      host_only: [false]
+      gpu: [true]
+      default: true
+      source: "Trilinos 17.3.0 MueLu_ParameterListInterpreter_def.hpp:254-263 (MUELU_KOKKOS_FACTORY: false selects the non-Kokkos setup factories: dropping, aggregation, tentative/smoothed P on the host) and :518-519 (default true on a GPU node). The solve uses the device Tpetra operators either way."
+    "aggregation: type":
+      host_only: [notay]
+      gpu: [uncoupled]
+      source: "Trilinos 17.3.0 MueLu_NotayAggregationFactory_def.hpp:115 (graph copied to the host: copyToHost) and :298-470 (pairwise aggregation in host loops); uncoupled = Kokkos UncoupledAggregationFactory"
 
 # ---------------------------------------------------------------------------------------------
 # Do not try: values refused like host-only ones (not charged). A plain list, without justification
