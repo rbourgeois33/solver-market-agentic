@@ -58,6 +58,12 @@ def _run_date(run_id: str) -> dt.datetime | None:
     return dt.datetime.strptime(m.group(1), "%Y%m%d-%H%M%S") if m else None
 
 
+def scrub(text: str) -> str:
+    """Remove local paths (account, project, build dirs) from text that is published."""
+    text = re.sub(r"/\S*?/spack-src/", "", text)  # library sources: keep packages/<pkg>/src/... only
+    return re.sub(r"(/(?:lustre|linkhome|gpfs\w*|home|tmp|scratch)\S*/)([^/\s\"']+)", r"\2", text)
+
+
 def _clean_deck(deck: dict) -> dict:
     d = {k: v for k, v in deck.items() if k not in ("comment", "why", "description")}
     return d
@@ -141,6 +147,7 @@ def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = 
             ana.get("diagonal", {}).get("zero_diagonal") == 0,
             "offdiag_positive": ana.get("offdiag_signs", {}).get("offdiag_positive"),
             "nnz_per_row_mean": st.get("nnz_per_row", {}).get("mean"), "bandwidth": st.get("bandwidth")}
+    ana = json.loads(scrub(json.dumps(ana)))
     (mdir / "info.json").write_text(json.dumps({**info, "analysis": ana}, indent=1) + "\n")
     rows = [m for m in _read_jsonl(ds / "matrices.jsonl") if m["name"] != name] + [info]
     _write_jsonl(ds / "matrices.jsonl", sorted(rows, key=lambda m: m["name"]))
@@ -176,7 +183,7 @@ def add_campaign(campaign: str, ds_dir: str) -> tuple[int, int]:
                                         "t_solve_min", "t_solve_max", "iterations", "true_relres",
                                         "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity",
                                         "levels", "level_rows", "level_nnz")},
-               "error": (r.get("error") or "")[:2000],
+               "error": scrub(r.get("error") or "")[:2000],
                "setup_repeats": params.get("setup_repeats"), "solve_repeats": params.get("solve_repeats"),
                "date": when.isoformat() if when else None, "run_id": e["id"], "campaign": cdir.name,
                "sma_commit": e.get("sma_commit") or ""}
@@ -221,7 +228,7 @@ def _card(ds: Path, best: list[dict]) -> str:
     gpus = sorted({r["gpu"] for r in runs})
     lines = [
         "---",
-        "license: other",
+        "license: cc-by-4.0",
         "pretty_name: GPU AMG solver configurations",
         "tags: [sparse-matrix, linear-solver, algebraic-multigrid, gpu, hpc, cfd]",
         "configs:",
