@@ -73,6 +73,7 @@ Common variants:
 | a cheaper, noisier test (shared GPU node) | `--no-exclusive` |
 | a memory cap | `--mem-limit-gb 40` |
 | another CLI agent | `--agent cmd:'mycli --prompt-file {prompt_file}'` |
+| tell the agent something (e.g. a target) | `--note "The record to beat is 19 ms per solve."` (kept on resume) |
 
 Budget: 1 configuration = 1 unit. The agent may stop early (it writes `DONE` with the reason). For
 reference, a 40-run campaign on a 2.6M-row 2D Poisson matrix took ~17 min of agent time and ~10 min of GPU.

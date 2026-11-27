@@ -71,7 +71,7 @@ def settings(cdir: Path, system: Path, mode: str) -> dict:
             allow.append(f"Read({a(r)}/**)")  # Read rules cover Read, Glob, Grep
     allow.append(f"Edit({a(cdir)}/**)")  # Edit rules cover Edit and Write
     allow += [f"WebFetch(domain:{d})" for d in DOC_DOMAINS]
-    record = ["journal.jsonl", "campaign.json", "runs/**", "queue/**", "transcripts/**", ".claude/**"]
+    record = ["journal.jsonl", "campaign.json", "runs/**", "queue/**", "transcripts/**", ".claude/**", "note.md"]
     deny = [f"Edit({a(cdir)}/{r})" for r in record]
     deny += ["Bash(sma-tools worker start:*)", "Bash(sma-tools worker stop:*)", "Bash(sma-tools campaign-init:*)",
              "Bash(sma-tools catalog:*)"]
@@ -91,6 +91,9 @@ def prompt(c: Campaign, mode: str, session: int) -> str:
     note = "" if session == 1 else (
         f"\n**This is session {session}: you were relaunched.** Read `reasoning.md` and `sma-tools status` "
         "first, then continue. If you were already done, write the final summary and `DONE`.")
+    user_note = c.dir / "note.md"  # sma campaign --note
+    if user_note.exists() and user_note.read_text().strip():
+        note += "\n\n## Note from the user\n" + user_note.read_text().strip() + "\n"
     t = string.Template((REPO_DIR / "prompts" / "agent.md").read_text())
     return t.substitute(
         budget=p["budget"], campaign=c.dir, system=p["system"], nrows=sysmeta.get("nrows"), nnz=sysmeta.get("nnz"),
@@ -219,6 +222,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-exclusive", action="store_true", help="worker on a shared node (tests only)")
     ap.add_argument("--worker-time", default="02:00:00", help="Slurm time limit of each worker job")
     ap.add_argument("--idle-timeout", type=int, default=600, help="worker exits after this many idle seconds")
+    ap.add_argument("--note", help="text added to the agent's prompt in every session (e.g. a target to beat); "
+                                   "saved in DIR/note.md, so a resume keeps it")
     ap.add_argument("--max-sessions", type=int, default=20)
     a = ap.parse_args(argv)
 
@@ -229,6 +234,8 @@ def main(argv=None) -> int:
         Campaign.init(cdir, a.system, a.budget, a.tol, a.solves_per_setup, a.libs.split(","), a.krylov.split(","),
                       a.amg.split(","), a.mem_limit_gb, a.setup_repeats, a.solve_repeats, a.warmup)
     c = Campaign(cdir)
+    if a.note is not None:
+        (cdir / "note.md").write_text(a.note.strip() + "\n")
     system = Path(c.params["system"])
     if not (system / "analysis.json").exists():
         raise SystemExit(f"{system}/analysis.json missing: run sma-tools analyze on a compute node first")
