@@ -10,10 +10,14 @@ Layout of DATASET_DIR (a Hugging Face dataset repository):
                                      info.json (provenance + analysis)
   best/<name>/<gpu>/k<k>_tol<tol>.yaml   the best deck, runnable with sma-tools run
 
-Commands: `sma-tools dataset add-matrix SYSTEM --to DIR [--name N --origin TEXT]` (compresses the
-matrix: run it on a compute node), `sma-tools dataset add CAMPAIGN... --to DIR` (runs only: light),
-`sma-tools dataset build DIR` (best.jsonl, best decks, README.md). `sma campaign --dataset DIR` adds the
-campaign's runs at the end.
+Commands (DIR defaults to $SMA_WORK/dataset):
+  sma-tools dataset new-matrix FILE --type P0P1 --origin TEXT [--blocks TEXT] [--rhs ones|FILE]
+      one compute-node job: convert + analyze into $SMA_WORK/data/<name>, then package into the dataset;
+      name = <prefix>_<type>_<rows> (prefix: --prefix, default trust_vef), e.g. trust_vef_P0P1_2827009
+  sma-tools dataset add CAMPAIGN...   add a campaign's runs (light); `sma campaign --dataset DIR` does it
+  sma-tools dataset build             best.jsonl, best decks, README.md
+  sma-tools dataset publish [--repo]  upload DIR to the Hugging Face dataset repository
+  (add-matrix SYSTEM packages an already converted system)
 
 Best = lowest cost among valid runs.
 """
@@ -152,6 +156,60 @@ def add_matrix(system: str, ds_dir: str, name: str | None = None, origin: str = 
     rows = [m for m in _read_jsonl(ds / "matrices.jsonl") if m["name"] != name] + [info]
     _write_jsonl(ds / "matrices.jsonl", sorted(rows, key=lambda m: m["name"]))
     return name
+
+
+def matrix_name(path: str, mtype: str, prefix: str = "trust_vef") -> str:
+    """<prefix>_<type>_<rows>, rows read from the file header (MatrixMarket or PETSc binary)."""
+    from .convert import peek_nrows
+    return f"{prefix}_{mtype}_{peek_nrows(Path(path))}"
+
+
+def new_matrix(path: str, mtype: str, origin: str, blocks: str = "", rhs: str = "ones",
+               prefix: str = "trust_vef", ds_dir: str | None = None) -> str:
+    """Convert + analyze + package one matrix (run on a compute node)."""
+    from . import sma_work
+    from .convert import convert
+    from .analyze import analyze
+    name = matrix_name(path, mtype, prefix)
+    system = sma_work() / "data" / name
+    convert(path, rhs, str(system))
+    from .convert import sha256
+    res = analyze(str(system / "A.csr"))
+    res["csr_sha256"] = sha256(system / "A.csr")
+    (system / "analysis.json").write_text(json.dumps(res, indent=2) + "\n")
+    return add_matrix(str(system), ds_dir or str(sma_work() / "dataset"), name, origin, None, blocks)
+
+
+# ------------------------------------------------------------------ publish
+LOCAL_PATH = re.compile(r"/(lustre|linkhome|gpfs\w*|home|scratch)/")
+
+
+def publish(ds_dir: str, repo: str, retries: int = 3) -> None:
+    """Upload the dataset directory to a Hugging Face dataset repository with `hf upload-large-folder`
+    (resumable). The `hf` CLI comes from $SMA_HF_SETUP (shell commands, machine env.sh); the token from
+    `hf auth login` stored in $HF_HOME (default ~/.cache/huggingface). Refuses to upload if a published
+    text file still contains a local path."""
+    import os
+    import subprocess
+    import time
+    ds = Path(ds_dir)
+    build(ds_dir)
+    leaks = [str(p.relative_to(ds)) for p in ds.rglob("*") if p.suffix in (".json", ".jsonl", ".md", ".yaml")
+             and ".cache" not in p.parts and LOCAL_PATH.search(p.read_text(errors="replace"))]
+    if leaks:
+        raise SystemExit(f"local paths in {leaks}: not published (see dataset.scrub)")
+    hf_home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    setup = os.environ.get("SMA_HF_SETUP", "")
+    cmd = (f"{setup + '; ' if setup else ''}export HF_HOME={hf_home}; "
+           f"hf upload-large-folder {repo} {ds} --repo-type=dataset --num-workers=4")
+    for attempt in range(1, retries + 1):
+        rc = subprocess.run(["bash", "-lc", cmd]).returncode
+        if rc == 0:
+            print(f"published: https://huggingface.co/datasets/{repo}")
+            return
+        print(f"upload failed (attempt {attempt}/{retries}, rc={rc}): retrying in 60 s (proxy errors are transient)")
+        time.sleep(60)
+    raise SystemExit("upload failed: check `hf auth whoami` (with HF_HOME set) and the proxy")
 
 
 # ------------------------------------------------------------------ runs

@@ -38,6 +38,9 @@ parameters (no "no catalogue" message).
 
 ### 2. Prepare a system (matrix + right-hand side)
 
+For a matrix that should also go into the public dataset, use instead
+`sma-tools dataset new-matrix` (see [Dataset](#dataset-hugging-face)): it does this step too.
+
 ```bash
 sbatch machines/jean-zay/prepare_system.slurm $WORK/aij.mtx ones $SMA_WORK/data/mysys
 ```
@@ -72,6 +75,7 @@ Common variants:
 | only some libraries | `--libs muelu,hypre` |
 | a cheaper, noisier test (shared GPU node) | `--no-exclusive` |
 | a memory cap | `--mem-limit-gb 40` |
+| add the runs to the local dataset at the end | `--dataset $SMA_WORK/dataset` (publish separately) |
 | another CLI agent | `--agent cmd:'mycli --prompt-file {prompt_file}'` |
 | tell the agent something (e.g. a target) | `--note "The record to beat is 19 ms per solve."` (kept on resume) |
 
@@ -111,6 +115,58 @@ Open `$C/index.md`: it links everything.
 | `runs/<id>/` | one configuration: `deck.yaml`, native inputs, `result.json` (all timings, iterations, residual, memory, rows/nnz per level), `lib.log` (the library's own output) |
 | `journal.jsonl` | the raw record (deck, hypothesis, full result per configuration) |
 | `transcripts/` | the agent sessions (stream-json) |
+
+### 6. Publish to the dataset (optional)
+
+```bash
+sma campaign ... --dataset $SMA_WORK/dataset   # at the end, the campaign's runs go into the local dataset
+sma-tools dataset publish                       # then upload it to Hugging Face (when you decide)
+```
+
+---
+
+## Dataset (Hugging Face)
+
+Public dataset: <https://huggingface.co/datasets/moletteremi/solver-market-agentic-database> (CC-BY-4.0).
+Local copy: `$SMA_WORK/dataset` (all `sma-tools dataset` commands use it by default; `--to DIR` otherwise).
+
+What it contains (no hypotheses, comments or reasoning: decks and measurements only):
+
+| file | content |
+|---|---|
+| `best.jsonl` | best valid configuration per (matrix, GPU, k, tol): `time_per_solve_ms`, `iterations`, `setup_ms`, deck |
+| `runs.jsonl` | every configuration run, valid or not (`error` says why), same readable columns first |
+| `matrices.jsonl`, `matrices/<name>/` | `A.mtx.gz` (MatrixMarket), `A.csr` + `b.vec` (binary, `sma/csr_io.py`), `info.json` (origin, blocks, analysis) |
+| `best/<matrix>/<gpu>/k<k>_tol<tol>.yaml` | the best deck, runnable with `sma-tools run` |
+| `README.md` | dataset card (leaderboard, matrices, how configurations are measured), generated |
+
+Matrix names: `trust_vef_<type>_<rows>`, e.g. `trust_vef_P0P1_2827009` (type = unknown blocks: `P0`, `P0P1`,
+`P0P1Pa`...). The TRUST test case, mesh and solver line that produced each matrix are in its `origin`.
+Identical matrices (same pattern, values equal to round-off) are kept once.
+
+```bash
+# add a matrix (MatrixMarket or PETSc binary, 32/64-bit, e.g. from TRUST save_matrix_petsc_format):
+# one CPU job converts + analyzes it into $SMA_WORK/data/<name> and packages it (name from the file header)
+sma-tools dataset new-matrix Matrix_2827009_rows_1_cpus.petsc --type P0P1 \
+    --origin "TRUST 1.9.9_beta, tests/GPU/JEL_bous/JEL_bous.data, BENCH mesh, ..." \
+    --blocks "P0: rows 0-2332799; P1: rows 2332800-2827008"        # [--rhs ones|FILE] [--prefix trust_vef]
+
+# benchmark it and add the results
+sma campaign $SMA_WORK/campaigns/jel-k0 --system $SMA_WORK/data/trust_vef_P0P1_2827009 --budget 40 \
+    --dataset $SMA_WORK/dataset
+
+sma-tools dataset add CAMPAIGN_DIR...   # add runs of campaigns made without --dataset
+sma-tools dataset build                 # regenerate best.jsonl, best/ and the card (done by add/publish)
+sma-tools dataset publish               # upload to $SMA_HF_REPO (set in machines/jean-zay/env.sh)
+```
+
+Publishing needs a Hugging Face write token, stored once with:
+```bash
+module load pytorch-gpu/py3/2.8.0 && HF_HOME=~/.cache/huggingface hf auth login
+```
+`publish` runs `hf upload-large-folder` (resumable) from that module with `HF_HOME=~/.cache/huggingface`
+(without it, `hf` does not find the token on Jean Zay), retries on proxy errors, and refuses to upload if a
+text file still contains a local path (account, project, build directories are stripped automatically).
 
 ---
 
@@ -242,6 +298,7 @@ It cannot change the build: proposals go to `suggestions.md`.
 | a run says a driver cannot start | look at `$C/queue/drivers/<lib>.stderr.log`; rebuild the drivers: `sbatch machines/jean-zay/build_drivers.slurm` |
 | the campaign waits a long time before the first run | the worker job is queued: `squeue -u $USER` (waiting is normal) |
 | `--campaign (or SMA_CAMPAIGN) is required` | add `--campaign $C` or `export SMA_CAMPAIGN=$C` |
+| `hf`: "Not logged in" / publish fails | `module load pytorch-gpu/py3/2.8.0; HF_HOME=~/.cache/huggingface hf auth whoami`; a proxy "403" is transient (publish retries) |
 | a deck is "refused (not charged)" | a host-only / do-not-try value: `sma-tools gpu-check DECK` says which |
 
 ## Layout
@@ -254,6 +311,7 @@ sma/             python toolbox (sma-tools); campaign.py (sma campaign); gpu_sup
   analyze.py       matrix properties + hints             deck.py      YAML deck -> native library input
   campaign_state.py budget, journal, cost, run           report.py    chart + table
   catalog.py       parameter catalogues                  srcscan.py   values / hidden keys from the sources
+  dataset.py       Hugging Face dataset (matrices, runs, best, card, publish)
   worker/          dispatcher (GPU node) + start/stop/status
 drivers/         C++ bench servers: common/ (CSR reader, timers, GPU memory sampler, true residual, JSON),
                  hypre/, petsc/, muelu/  (built by drivers/build.sh)

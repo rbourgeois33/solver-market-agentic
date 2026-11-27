@@ -19,3 +19,7 @@ export SPACK_DISABLE_LOCAL_CONFIG=1
 # The arch/h100 python/3.11.5 module lacks os.O_PATH, which spack 1.2 needs: use the system python.
 export SPACK_PYTHON=/usr/bin/python3
 [ -f $SMA_WORK/spack/share/spack/setup-env.sh ] && . $SMA_WORK/spack/share/spack/setup-env.sh
+# Hugging Face publication (sma-tools dataset publish): the `hf` CLI comes from this module (in a separate
+# shell); the token is the one stored by `hf auth login` in ~/.cache/huggingface (HF_HOME must point there).
+export SMA_HF_SETUP="module purge; module load pytorch-gpu/py3/2.8.0"
+export SMA_HF_REPO=${SMA_HF_REPO:-moletteremi/solver-market-agentic-database}

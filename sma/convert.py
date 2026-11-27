@@ -82,6 +82,20 @@ def read_petsc_vec(path: Path) -> np.ndarray:
         return np.fromfile(f, ">f8", n).astype("<f8")
 
 
+def peek_nrows(path: Path) -> int:
+    """Number of rows from the header only (MatrixMarket or PETSc binary, 32/64-bit header)."""
+    if _detect(path) == "mtx":
+        with open(path) as f:
+            for line in f:
+                if not line.startswith("%"):
+                    return int(line.split()[0])
+    with open(path, "rb") as f:
+        head = f.read(32)
+    if int.from_bytes(head[:4], "big") == PETSC_MAT_ID:
+        return int.from_bytes(head[4:8], "big")
+    return int.from_bytes(head[8:16], "big")
+
+
 def _detect(path: Path) -> str:
     with open(path, "rb") as f:
         head = f.read(16)
