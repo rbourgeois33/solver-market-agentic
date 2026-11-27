@@ -195,6 +195,17 @@ def add_campaign(campaign: str, ds_dir: str) -> tuple[int, int]:
 
 
 # ------------------------------------------------------------------ best + card
+READABLE = ("time_per_solve_ms", "iterations", "setup_ms", "valid")
+
+
+def _readable(r: dict) -> dict:
+    """Columns a person reads first in the dataset viewer: cost in ms (time per solve; with k > 0 it includes
+    the setup share), iterations, setup in ms, validity."""
+    ms = lambda x: round(x * 1e3, 2) if isinstance(x, (int, float)) else None
+    return {"time_per_solve_ms": ms(r.get("cost_s")), "iterations": r.get("iterations"),
+            "setup_ms": ms(r.get("t_setup_median")), "valid": r.get("valid", True)}
+
+
 def build(ds_dir: str) -> list[dict]:
     ds = Path(ds_dir)
     runs = [r for r in _read_jsonl(ds / "runs.jsonl") if r["valid"] and r["cost_s"]]
@@ -209,15 +220,20 @@ def build(ds_dir: str) -> list[dict]:
         path = ds / "best" / m / _slug(gpu) / f"k{k}_tol{tol:g}.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(b["deck"])
-        best.append({"matrix": m, "gpu": gpu, "k": k, "tol": tol, "lib": b["lib"],
+        best.append({"matrix": m, "gpu": gpu, **_readable(b), "k": k, "tol": tol, "lib": b["lib"],
                      "solver": b["solver"], "cost_s": b["cost_s"], "t_setup_median": b["t_setup_median"],
-                     "t_solve_median": b["t_solve_median"], "iterations": b["iterations"],
+                     "t_solve_median": b["t_solve_median"],
                      "repeats_of_this_deck": len(same),
                      "cost_s_all_repeats": sorted(r["cost_s"] for r in same),
                      "deck": b["deck"], "deck_file": str(path.relative_to(ds)), "run_id": b["run_id"],
                      "configs_tested": len([r for r in _read_jsonl(ds / "runs.jsonl")
                                             if (r["matrix"], r["gpu"], r["k"], r["tol"]) == (m, gpu, k, tol)])})
     _write_jsonl(ds / "best.jsonl", best)
+    # runs: the same readable columns first (viewer), raw seconds kept
+    allruns = _read_jsonl(ds / "runs.jsonl")
+    _write_jsonl(ds / "runs.jsonl", [{"matrix": r["matrix"], "gpu": r["gpu"], **_readable(r),
+                                     **{k: v for k, v in r.items() if k not in ("matrix", "gpu") and k not in READABLE}}
+                                    for r in allruns])
     (ds / "README.md").write_text(_card(ds, best))
     return best
 
