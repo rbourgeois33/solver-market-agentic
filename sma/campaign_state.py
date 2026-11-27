@@ -134,8 +134,9 @@ class Campaign:
         from .gpu import refused
         bad = refused(d, setup_measured=p["solves_per_setup"] > 0)
         if bad:
-            raise deckmod.DeckError("refused (not charged): host-only or ruled-out values:\n" + "\n".join(
-                f"  {f['key']} = {f['value']}  [{f['status']}] {f['note']}\n    evidence: {f['source']}" for f in bad))
+            raise deckmod.DeckError("refused (not charged): host-only or do-not-try values:\n" + "\n".join(
+                f"  {f['key']} = {f['value']}  [{f['status']}] {f['note']}"
+                + (f"\n    evidence: {f['source']}" if f["source"] else "") for f in bad))
 
     def submit_and_wait(self, deck_path: str, why: str, timeout: float = 900,
                         poll: float = 2.0) -> dict:
@@ -212,11 +213,16 @@ def short(entry: dict, campaign: Campaign) -> dict:
     r = entry["result"]
     keys = ("converged", "lib_converged", "iterations", "true_relres", "t_setup_median", "t_solve_median",
             "t_setup_min", "t_setup_max", "t_solve_min", "t_solve_max",
-            "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity", "levels", "error",
+            "gpu_mem_peak_bytes", "operator_complexity", "grid_complexity", "levels", "half_precision", "error",
             "unused_options", "converged_reason", "driver_load")
     out = {"id": entry["id"], "valid": entry["valid"], "charged": entry.get("charged", True),
            "cost_s": entry["cost"], "mem_ok": entry["mem_ok"]}
     out.update({k: r[k] for k in keys if k in r and r[k] not in ("", None)})
+    rows, nnz = r.get("level_rows") or [], r.get("level_nnz") or []
+    if rows and len(rows) == len(nnz):  # finest first
+        out["hierarchy"] = [f"L{i}: {int(n):,} rows, {int(z):,} nnz, {z / n:.1f}/row" if n else f"L{i}: 0 rows"
+                            for i, (n, z) in enumerate(zip(rows, nnz))]
+    out["lib_log"] = f"runs/{entry['id']}/lib.log (library output; raise the library's verbosity in the deck for more)"
     err = out.get("error")
     if err and len(err) > 1200:  # e.g. MueLu dumps all valid parameters; full text stays in result.json
         out["error"] = err[:500] + "\n[... truncated, see runs/<id>/result.json ...]\n" + err[-600:]

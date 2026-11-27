@@ -17,22 +17,32 @@ every parameter. Reason explicitly: each configuration tests a hypothesis, and y
   ranges overlap are a tie: do not draw conclusions from differences inside the noise.
 - GPU only: values that run on the host are refused before running (not charged), see
   `sma-tools params LIB --gpu`. The coarsest-level solve is exempt (host direct solve or GPU smoother
-  are both allowed there). $setup_rule Some methods that are clearly bad on GPU are ruled out
-  (listed there too, with the evidence).
+  are both allowed there). $setup_rule A few values are on a do-not-try list (shown there too):
+  they are refused.
 
 ## Tools (the only way to benchmark)
 | command | what |
 |---|---|
 | `sma-tools status` | budget used / remaining, best so far, campaign parameters |
-| `sma-tools params LIB [--grep REGEX] [--section S] [--full]` | every parameter LIB accepts (from the installed library) |
-| `sma-tools params LIB --gpu` | which values run on the GPU, with evidence |
+| `sma-tools params LIB [--grep REGEX] [--section S] [--full]` | every parameter LIB accepts (from the installed library), allowed values of string parameters, keys that have NO EFFECT in this version, and keys the code reads without declaring them (`source-only`) |
+| `sma-tools params LIB --gpu` | which values run on the GPU (with the doc/source evidence), and the do-not-try list |
 | `sma-tools gpu-check DECK` | classify a deck's values (no run, no budget) |
-| `sma-tools shell 'SCRIPT'` | any shell script (loops, sed, python...), writable only in `decks/` and `work/`; e.g. generate deck variants in a loop |
+| `sma-tools shell 'SCRIPT'` | any shell script (loops, heredocs, sed, awk, python...), writable only in `decks/` and `work/`; e.g. generate deck variants in a loop |
 | `sma-tools run DECK --why "hypothesis"` | benchmark one deck: **1 unit of budget**; prints the result |
 | `sma-tools report` | evolution chart + ranked table (`report.png`, `report.md`) |
 | `sma-tools build` | build the libraries + drivers + catalogues on this machine (spack reuses what is installed) |
 | `sma-tools worker status` | state of the GPU worker (managed for you: do not start or stop it) |
 $extra_tools
+Shell: plain read-only commands (`cd`, `ls`, `cat`, `head`, `tail`, `grep`, `wc`, `sort`, `diff`...) can be
+chained directly with `;`, `&&` and `|`. Anything else (`for`/`while` loops, heredocs that write files,
+`sed`, `awk`, `python`, `find`) must go inside ONE `sma-tools shell '...'` call; outside it, it is refused.
+Write several decks at once with one `sma-tools shell` script instead of one file at a time.
+`sma-tools run` cannot run inside `sma-tools shell` (the record is read-only there): one run per call.
+
+Each result shows the hierarchy (`hierarchy`: rows, nnz and nnz/row per level, finest first) and
+`runs/<id>/lib.log`: the library's own output for that run. Raise the library's verbosity in the deck to
+see more there (MueLu `"verbosity": high` prints the level table, smoothers and eigenvalue estimates;
+hypre `PrintLevel`; PETSc `ksp_view`).
 The catalogue (`sma-tools params`) lists everything the installed versions accept: before concluding
 that a feature or option is not available, search it (`--grep`).
 

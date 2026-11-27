@@ -104,7 +104,7 @@ def cmd_build(a):
 
 def cmd_catalog(a):
     from .catalog import build
-    build(a.launcher, a.libs.split(","))
+    build(a.launcher, a.libs.split(","), a.parse_only)
 
 
 def cmd_params(a):
@@ -198,6 +198,8 @@ def main(argv=None):
     s = sub.add_parser("catalog", help="build the parameter catalogues from the installed libraries (GPU node)")
     s.add_argument("--launcher", default="", help="prefix for the drivers, e.g. 'srun --ntasks=1' in a Slurm job")
     s.add_argument("--libs", default="hypre,muelu,petsc")
+    s.add_argument("--parse-only", action="store_true",
+                   help="rebuild the catalogues from the raw dumps already made (no driver run: no GPU needed)")
     s.set_defaults(func=cmd_catalog)
 
     s = sub.add_parser("params", help="every parameter a library accepts (names, types, defaults, docs)")
@@ -206,8 +208,9 @@ def main(argv=None):
     s.add_argument("--section", help="hypre: amg|pcg|gmres|fgmres|bicgstab; muelu: muelu|ifpack2|belos[:Solver]|"
                                      "amesos2; petsc: substring of the help section title")
     s.add_argument("--full", action="store_true", help="full doc text")
-    s.add_argument("--all", action="store_true", help="also options that only exist with host-only types")
-    s.add_argument("--gpu", action="store_true", help="the GPU-support rules (values: gpu / host_only) and evidence")
+    s.add_argument("--all", action="store_true", help="also host-only / do-not-try values and options that only "
+                                                     "exist with host-only types")
+    s.add_argument("--gpu", action="store_true", help="the GPU-support rules (values: gpu / host_only, with evidence) and the do-not-try list")
     s.set_defaults(func=cmd_params)
 
     s = sub.add_parser("shell", help="run a shell script confined to the campaign's decks/ and work/ (loops, sed, ...)")

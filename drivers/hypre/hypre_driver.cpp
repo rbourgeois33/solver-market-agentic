@@ -242,6 +242,7 @@ struct HypreDriver {
       double r = (double)hypre_ParCSRMatrixGlobalNumRows(As[l]);
       if (l == 0) { nnz0 = z; rows0 = r; }
       nnz += z; rows += r;
+      st.level_rows.push_back(r); st.level_nnz.push_back(z);
     }
     st.levels = L;
     st.op_complexity = nnz0 > 0 ? nnz / nnz0 : NAN;

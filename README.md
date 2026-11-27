@@ -91,8 +91,12 @@ backend_params: {mat_type: aijkokkos, vec_type: kokkos}
 ```
 Misspelled names are reported: hypre driver (unknown setter), MueLu (rejects with "did you mean"), PETSc
 (`unused_options` in the result). `sma-tools params LIB` lists every accepted parameter (from the installed library).
-GPU only: values that run on the host are refused before running (`sma/gpu_support.yaml`, with evidence; the
-coarsest-level solve is exempt).
+GPU only: values that run on the host are refused before running (`sma/gpu_support.yaml`, with the doc or
+source evidence; the coarsest-level solve is exempt), as are the values on a short do-not-try list.
+The catalogue also gives the allowed values of string parameters (MueLu user guide tables + the values the
+sources compare them to), flags declared keys that no code reads (no effect), and lists keys the code reads
+without declaring them. MueLu `"half precision": true` is implemented by the driver (float hierarchy inside
+the double-precision Krylov), as the Stratimikos adapter does upstream.
 
 ## How a configuration is measured
 
@@ -120,7 +124,8 @@ Benchmarks run on an exclusive node by default (`--no-exclusive` is for tests on
   failures with their reason, and the full list.
 
 The raw record is `journal.jsonl` (deck, hypothesis, full result per configuration) and `runs/<id>/` (deck, native
-inputs given to the library, result.json). The agent's reasoning is in `reasoning.md`.
+inputs given to the library, result.json with the rows/nnz of every level, lib.log with the library's own output).
+The agent's reasoning is in `reasoning.md`.
 
 ## Quick start (Jean Zay)
 

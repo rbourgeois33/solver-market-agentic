@@ -1,5 +1,6 @@
 """GPU-only rule: classify a deck's option values as gpu / host_only / unknown (sma/gpu_support.yaml),
-plus ruled-out methods (clearly bad on GPU) and host setup options (refused when k = 0).
+plus the "do not try" list (status ruled_out, refused without justification) and host setup options
+(refused when k = 0).
 
 `sma-tools run` refuses a deck with a host_only or ruled_out finding (not charged to the budget). The coarsest-
 level solve is exempt (it may run on the host). Rules apply to EFFECTIVE values, so library defaults
@@ -125,32 +126,44 @@ def _walk(d: dict, path: str = ""):
 
 
 def _extra(deck: dict, setup_measured: bool) -> list[dict]:
-    """Ruled-out methods, and host setup options when the setup is not measured."""
+    """Do-not-try values, and host setup options (refused when the setup is measured, k > 0; allowed when
+    k = 0). Setup rules with a "default" also check the library default when the deck does not set the key."""
     R, lib, out = rules(), deck["lib"], []
     params = {**deck.get("precond_params", {}), **deck.get("solver_params", {})}
     for loc, k, v in _walk(params):
-        r = R.get("ruled_out", {}).get(lib, {}).get(k)
-        if r and v in r["values"]:
-            out.append(_f(loc, v, "ruled_out", r["evidence"], "ruled out: clearly bad on GPU"))
+        r = R.get("do_not_try", {}).get(lib, {}).get(k)
+        if r and v in r:
+            out.append(_f(loc, v, "ruled_out", "", DO_NOT_TRY))
         r = R.get("setup_rules", {}).get(lib, {}).get(k)
         if r and v in r.get("host_only", []):
-            out.append(_f(loc, v, "allowed_setup_cost" if setup_measured else "host_only", r["source"],
-                          "setup on the host" + ("" if setup_measured else
-                                                 ": refused while the setup is not measured (k = 0)")))
+            out.append(_host_setup(loc, v, r, setup_measured))
+    pl = deck.get("precond_params", {})
+    for k, r in R.get("setup_rules", {}).get(lib, {}).items():
+        if "default" in r and k not in pl and r["default"] in r.get("host_only", []):
+            out.append(_host_setup(f"{k} (default)", r["default"], r, setup_measured))
     return out
 
 
+def _host_setup(loc, v, r, setup_measured: bool) -> dict:
+    if setup_measured:
+        return _f(loc, v, "host_only", r["source"], "setup on the host: refused, the setup is measured (k > 0); "
+                                                    "choose a GPU value")
+    return _f(loc, v, "host_setup_unmeasured", r["source"], "setup on the host: allowed, the setup is not "
+                                                            "measured (k = 0)")
+
+
 REFUSED = ("host_only", "ruled_out")
+DO_NOT_TRY = "on the do-not-try list"
 
 
 def classify(deck: dict, setup_measured: bool = False) -> list[dict]:
     base = {"hypre": _hypre, "petsc": _petsc, "muelu": _muelu}[deck["lib"]](deck)
     # smoother values already classified: mark ruled-out ones
-    ro = rules().get("ruled_out", {}).get(deck["lib"], {})
+    ro = rules().get("do_not_try", {}).get(deck["lib"], {})
     for f in base:
-        key = f["key"].split(" / ")[-1]
-        if key in ro and f["value"] in ro[key]["values"]:
-            f.update(status="ruled_out", source=ro[key]["evidence"], note="ruled out: clearly bad on GPU")
+        key = f["key"].split(" / ")[-1].split(":")[0] if deck["lib"] == "hypre" else f["key"].split(" / ")[-1]
+        if key in ro and f["value"] in ro[key]:
+            f.update(status="ruled_out", source="", note=DO_NOT_TRY)
     seen = {(f["key"], str(f["value"])) for f in base}
     return base + [f for f in _extra(deck, setup_measured) if (f["key"], str(f["value"])) not in seen
                    and not any(f["key"].endswith(b["key"].split(" / ")[-1]) and str(f["value"]) == str(b["value"])
@@ -165,13 +178,41 @@ def host_only(deck: dict) -> list[dict]:  # kept for callers that only need the 
     return [f for f in classify(deck) if f["status"] == "host_only"]
 
 
+_SMOOTHER_KEYS = ("smoother: type", "smoother: pre type", "smoother: post type")
+
+
+def value_status(lib: str, key: str, value) -> str | None:
+    """GPU status of one value of one key, for the catalogue view: gpu | depends | host_only | do_not_try |
+    host_setup (allowed only when k = 0) | exempt (coarsest level) | unknown; None when no rule covers the key
+    (no tag shown). lib: hypre | muelu (MueLu and Ifpack2 keys) | petsc."""
+    R = rules()
+    if value in R.get("do_not_try", {}).get(lib, {}).get(key, []):
+        return "do_not_try"
+    sr = R.get("setup_rules", {}).get(lib, {}).get(key)
+    if sr is not None:
+        return "host_setup" if value in sr.get("host_only", []) else "gpu" if value in sr.get("gpu", []) else "unknown"
+    if lib != "muelu":
+        return None
+    M = R["muelu"]
+    if key.startswith(M["exempt_prefix"]):
+        return "exempt"
+    if key in _SMOOTHER_KEYS:
+        st = M["smoother_types"].get(str(value).upper())
+        return st["status"] if st else "unknown"
+    if key == "relaxation: type":
+        return M["relaxation_types"].get(value, "unknown")
+    if key == "fact: type":
+        return M["fact_types"].get(value, "unknown")
+    return None
+
+
 def show(lib: str) -> str:
     """Human-readable rules for one library (sma-tools params LIB --gpu): GPU support of values,
-    host setup options refused when the setup is not measured, ruled-out methods."""
+    host setup options (allowed when k = 0, refused when k > 0), the do-not-try list."""
     R = rules()
     d = {lib: R[lib]}
     if lib in R.get("setup_rules", {}):
-        d["setup_on_host (refused when k = 0)"] = R["setup_rules"][lib]
-    if lib in R.get("ruled_out", {}):
-        d["ruled_out (clearly bad on GPU)"] = R["ruled_out"][lib]
+        d["setup_on_host (allowed when k = 0, refused when k > 0)"] = R["setup_rules"][lib]
+    if lib in R.get("do_not_try", {}):
+        d["do_not_try (refused)"] = R["do_not_try"][lib]
     return yaml.safe_dump(d, sort_keys=False, width=110, allow_unicode=True)

@@ -29,8 +29,14 @@ and evidence in `sma/gpu_support.yaml` (`sma-tools params LIB --gpu`; `sma-tools
 check without running). Rules apply to effective values, library defaults included (MueLu's default
 smoother is Symmetric Gauss-Seidel, which runs on the host). The coarsest-level solve is exempt: a host
 direct solve or a GPU smoother are both allowed there. Host setup options (e.g. MueLu
-`"aggregation: backend": host`) are refused when the setup is not measured (k = 0). Methods that are clearly
-bad on GPU are ruled out with their evidence (MueLu unsmoothed aggregation, MT Gauss-Seidel).
+`"aggregation: backend": host`, and MueLu's default `"aggregation: coloring algorithm": serial`) are allowed
+when the setup is not measured (k = 0) and refused when it is (k > 0). Methods that are clearly
+bad on GPU are on a do-not-try list (refused, no justification given): MueLu unsmoothed aggregation,
+MT Gauss-Seidel smoothers, hypre AggInterpType 6.
+
+MueLu `"half precision": true` is handled by the driver, not by MueLu (upstream only the Stratimikos
+adapter implements it; `CreateTpetraPreconditioner` accepts and ignores it): float copy of A, MueLu
+hierarchy in float, applied in the double-precision Belos solve. The float copy counts in the setup time.
 
 Stopping: the campaign `--tol` is on the TRUE relative residual ||b-Ax||/||b||, recomputed by the
 driver. If the deck gives no internal tolerance, the campaign tolerance is used for the library's

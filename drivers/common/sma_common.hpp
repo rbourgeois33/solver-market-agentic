@@ -289,6 +289,7 @@ struct RunStats {
   size_t mem_baseline = 0, mem_peak = 0;
   double op_complexity = NAN, grid_complexity = NAN;
   int levels = -1;
+  std::vector<double> level_rows, level_nnz;  // per level, finest first (from the first timed solve)
   std::string error;
 };
 
@@ -313,6 +314,7 @@ inline void fill_result(Json& j, const Request& rq, const std::string& lib, cons
   j.integer("gpu_mem_total_bytes", (long long)MemSampler::total());
   j.num("operator_complexity", s.op_complexity).num("grid_complexity", s.grid_complexity);
   j.integer("levels", s.levels);
+  j.vec("level_rows", s.level_rows).vec("level_nnz", s.level_nnz);
   j.str("error", s.error);
 }
 

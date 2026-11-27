@@ -39,18 +39,33 @@ from .worker import control
 DOC_DOMAINS = ["hypre.readthedocs.io", "petsc.org", "trilinos.github.io", "docs.trilinos.org",
                "github.com", "raw.githubusercontent.com", "gitlab.com"]
 NO_PROGRESS_SESSIONS = 2
+READ_ONLY_CMDS = ["cd", "pwd", "ls", "cat", "head", "tail", "grep", "wc", "echo", "sort", "uniq", "cut", "tr",
+                  "diff", "comm", "column", "nl", "basename", "dirname", "realpath", "stat", "du", "date",
+                  "true"]
 
 
 # ------------------------------------------------------------------ permissions
+def read_roots(cdir: Path, system: Path) -> list[Path]:
+    return [cdir, system, REPO_DIR / "docs", REPO_DIR / "decks", REPO_DIR / "prompts", REPO_DIR / "sma",
+            REPO_DIR / "README.md", sma_work() / "share", sma_work() / "install", sma_work() / "view",
+            sma_work() / "env" / "build_log.md", sma_work() / "logs"]
+
+
+def add_dirs(cdir: Path, system: Path) -> list[Path]:
+    """Extra working directories given to Claude Code (--add-dir), read-only through the rules: without
+    them, `cd <dir>; cat ...` outside the campaign directory is refused as a compound command."""
+    return [REPO_DIR] + [r for r in read_roots(cdir, system) if r != cdir and r.is_dir() and REPO_DIR not in r.parents]
+
+
 def settings(cdir: Path, system: Path, mode: str) -> dict:
     a = lambda p: "/" + str(p)  # Claude Code absolute-path rule prefix: //abs/path
-    read_roots = [cdir, system, REPO_DIR / "docs", REPO_DIR / "decks", REPO_DIR / "prompts", REPO_DIR / "sma",
-                  REPO_DIR / "README.md", sma_work() / "share", sma_work() / "install", sma_work() / "view",
-                  sma_work() / "env" / "build_log.md", sma_work() / "logs"]
-    allow = ["Bash(sma-tools:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
-             "Bash(grep:*)", "Bash(wc:*)"]
+    read_roots_ = read_roots(cdir, system)
+    # Plain read-only commands, chainable with ; && | (Claude Code checks each part). Loops (for/while)
+    # cannot be allowed by a prefix rule: they go inside `sma-tools shell '...'` (bwrap, writes only in
+    # decks/ and work/), as do sed/awk/python/find, which could write anywhere if allowed directly.
+    allow = ["Bash(sma-tools:*)"] + [f"Bash({c}:*)" for c in READ_ONLY_CMDS]
     allow += ["Bash(squeue:*)", "Bash(sacct:*)"] if mode == "slurm" else ["Bash(nvidia-smi:*)"]
-    for r in read_roots:
+    for r in read_roots_:
         allow.append(f"Read({a(r)})")  # the path itself (e.g. Grep rooted at a directory)
         if r.suffix == "":
             allow.append(f"Read({a(r)}/**)")  # Read rules cover Read, Glob, Grep
@@ -83,16 +98,18 @@ def prompt(c: Campaign, mode: str, session: int) -> str:
         objective=objective, libs=", ".join(p["libs"]), krylov=", ".join(p["krylov"]), amg=", ".join(p["amg"]),
         setup_repeats=p["setup_repeats"], solve_repeats=p["solve_repeats"], extra_tools=extra,
         repo=REPO_DIR, share=sma_work() / "share" / "sma", session_note=note,
-        setup_rule=("The setup is not measured here (k = 0), so it must run on the GPU too: host setup "
-                    "options are refused." if k == 0 else
-                    "The setup is measured (k > 0): setup work on the host is allowed, its time counts."))
+        setup_rule=("The setup is not measured here (k = 0): setup work on the host is allowed." if k == 0 else
+                    "The setup is measured (k > 0), so it must run on the GPU too: host setup options are "
+                    "refused, library defaults included (e.g. MueLu's default \"serial\" aggregation coloring)."))
 
 
 # ------------------------------------------------------------------ agents
-def agent_cmd(agent: str, model: str | None, prompt_file: Path, settings_file: Path, cdir: Path) -> list[str]:
+def agent_cmd(agent: str, model: str | None, prompt_file: Path, settings_file: Path, cdir: Path,
+              extra_dirs: list[Path] = ()) -> list[str]:
     if agent == "claude":
         cmd = ["claude", "-p", prompt_file.read_text(), "--permission-mode", "dontAsk",
                "--settings", str(settings_file), "--setting-sources", "", "--strict-mcp-config",
+               *[x for d in extra_dirs for x in ("--add-dir", str(d))],
                "--tools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch",
                "--output-format", "stream-json", "--verbose"]
         return cmd + (["--model", model] if model else [])
@@ -269,7 +286,7 @@ def main(argv=None) -> int:
             s = {"n": n, "start": time.time(), "summary_only": summary_only}
             log(f"session {n} start (budget used {before}/{c.params['budget']})")
             with open(tdir / f"session-{n:02d}.jsonl", "w") as out, open(tdir / f"session-{n:02d}.err", "w") as err:
-                p = subprocess.Popen(agent_cmd(a.agent, a.model, pfile, sfile, cdir), cwd=cdir, env=env,
+                p = subprocess.Popen(agent_cmd(a.agent, a.model, pfile, sfile, cdir, add_dirs(cdir, system)), cwd=cdir, env=env,
                                      stdout=out, stderr=err, stdin=subprocess.DEVNULL, start_new_session=True)
                 agent_proc[:] = [p]
                 s["rc"] = p.wait()

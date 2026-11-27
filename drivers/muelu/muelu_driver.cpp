@@ -2,6 +2,10 @@
 // Request keys: solver (Belos name), belos_xml, muelu_xml (written by sma/deck.py).
 // CG-family solvers get MueLu as LEFT preconditioner, all others as RIGHT preconditioner
 // (so GMRES's residual is the unpreconditioned one); request key "prec_side" overrides.
+// MueLu "half precision" (true): handled HERE, not by MueLu. Upstream it is implemented only in the
+// Stratimikos adapter (Thyra_MueLuPreconditionerFactory_def.hpp), which CreateTpetraPreconditioner
+// does not use (it accepts the key and ignores it). The driver does what that adapter does: float
+// copy of A, MueLu hierarchy in float, applied inside the double-precision Krylov (HalfPrecOp).
 #include <BelosLinearProblem.hpp>
 #include <BelosSolverFactory.hpp>
 #include <BelosTpetraAdapter.hpp>
@@ -33,6 +37,42 @@ using NO = map_t::node_type;
 using crs_t = Tpetra::CrsMatrix<SC, LO, GO, NO>;
 using mv_t = Tpetra::MultiVector<SC, LO, GO, NO>;
 using op_t = Tpetra::Operator<SC, LO, GO, NO>;
+using SCf = float;
+using mvf_t = Tpetra::MultiVector<SCf, LO, GO, NO>;
+using opf_t = Tpetra::Operator<SCf, LO, GO, NO>;
+
+// Double-precision view of a float preconditioner: X (double) -> float, apply, -> Y (double).
+class HalfPrecOp : public op_t {
+ public:
+  explicit HalfPrecOp(Teuchos::RCP<opf_t> p) : P_(p) {}
+  Teuchos::RCP<const map_t> getDomainMap() const override { return P_->getDomainMap(); }
+  Teuchos::RCP<const map_t> getRangeMap() const override { return P_->getRangeMap(); }
+  bool hasTransposeApply() const override { return false; }
+  void apply(const mv_t& X, mv_t& Y, Teuchos::ETransp mode = Teuchos::NO_TRANS, SC alpha = 1.0,
+             SC beta = 0.0) const override {
+    if (mode != Teuchos::NO_TRANS) throw std::runtime_error("half precision preconditioner: no transpose apply");
+    const size_t nv = X.getNumVectors();
+    if (Xf_.is_null() || Xf_->getNumVectors() != nv) {
+      Xf_ = Teuchos::rcp(new mvf_t(P_->getDomainMap(), nv));
+      Yf_ = Teuchos::rcp(new mvf_t(P_->getRangeMap(), nv));
+      T_ = Teuchos::null;
+    }
+    Tpetra::deep_copy(*Xf_, X);
+    P_->apply(*Xf_, *Yf_);
+    if (alpha == 1.0 && beta == 0.0) {
+      Tpetra::deep_copy(Y, *Yf_);
+      return;
+    }
+    if (T_.is_null()) T_ = Teuchos::rcp(new mv_t(Y.getMap(), nv));
+    Tpetra::deep_copy(*T_, *Yf_);
+    Y.update(alpha, *T_, beta);  // beta == 0: Y is not read
+  }
+
+ private:
+  Teuchos::RCP<opf_t> P_;
+  mutable Teuchos::RCP<mvf_t> Xf_, Yf_;
+  mutable Teuchos::RCP<mv_t> T_;
+};
 
 struct MueLuDriver {
   Teuchos::RCP<const Teuchos::Comm<int>> comm = Tpetra::getDefaultComm();
@@ -68,19 +108,20 @@ struct MueLuDriver {
 
   // Operator / grid complexity from the level matrices. (Hierarchy::GetOperatorComplexity returns 0
   // when coarse operators have no global constants computed, which happens in normal runs.)
-  template <class H>
-  static void complexities(H& h, RunStats& st) {
-    using xmat_t = Xpetra::Matrix<SC, LO, GO, NO>;
+  template <class S>
+  static void complexities(MueLu::Hierarchy<S, LO, GO, NO>& h, RunStats& st) {
+    using xmat_t = Xpetra::Matrix<S, LO, GO, NO>;
     double nnz = 0, nnz0 = 0, rows = 0, rows0 = 0;
     int L = h.GetNumLevels();
     for (int l = 0; l < L; ++l) {
       auto lvl = h.GetLevel(l);
       if (!lvl->IsAvailable("A")) break;
-      auto A = Teuchos::rcp_dynamic_cast<xmat_t>(lvl->template Get<Teuchos::RCP<Xpetra::Operator<SC, LO, GO, NO>>>("A"));
+      auto A = Teuchos::rcp_dynamic_cast<xmat_t>(lvl->template Get<Teuchos::RCP<Xpetra::Operator<S, LO, GO, NO>>>("A"));
       if (A.is_null()) break;
       double z = (double)A->getLocalNumEntries(), r = (double)A->getLocalNumRows();  // 1 rank in v1
       if (l == 0) { nnz0 = z; rows0 = r; }
       nnz += z; rows += r;
+      st.level_rows.push_back(r); st.level_nnz.push_back(z);
     }
     st.levels = L;
     st.op_complexity = nnz0 > 0 ? nnz / nnz0 : NAN;
@@ -107,32 +148,46 @@ struct MueLuDriver {
     mem.start();
     st.mem_baseline = mem.baseline();
     Belos::SolverFactory<SC, mv_t, op_t> factory;
-    Teuchos::RCP<MueLu::TpetraOperator<SC, LO, GO, NO>> prec;
+    Teuchos::RCP<MueLu::TpetraOperator<SC, LO, GO, NO>> prec;   // double hierarchy
+    Teuchos::RCP<MueLu::TpetraOperator<SCf, LO, GO, NO>> precf;  // float hierarchy ("half precision")
+    Teuchos::RCP<op_t> precOp;                                   // what Belos applies
+    bool half = false;
     Teuchos::RCP<Belos::SolverManager<SC, mv_t, op_t>> solver;
     Teuchos::RCP<Belos::LinearProblem<SC, mv_t, op_t>> problem;
     bool first = true;
     auto release = [&] {
       solver = Teuchos::null;
       problem = Teuchos::null;
+      precOp = Teuchos::null;
       prec = Teuchos::null;
+      precf = Teuchos::null;
       Kokkos::fence();
     };
     auto setup = [&] {
       // Fresh copy each time: MueLu may annotate/modify the parameter list it is given.
       auto muelu_params = Teuchos::getParametersFromXmlFile(muelu_xml);
+      half = muelu_params->isParameter("half precision") && muelu_params->get<bool>("half precision");
+      if (muelu_params->isParameter("half precision")) muelu_params->remove("half precision");
       X->putScalar(0.0);
       Kokkos::fence();
       double t0 = now();
-      Teuchos::RCP<op_t> Aop = A;
-      prec = MueLu::CreateTpetraPreconditioner(Aop, *muelu_params);
+      if (half) {  // the float copy of A is part of the setup (as in the Stratimikos adapter)
+        Teuchos::RCP<opf_t> Af = A->convert<SCf>();
+        precf = MueLu::CreateTpetraPreconditioner(Af, *muelu_params);
+        precOp = Teuchos::rcp(new HalfPrecOp(precf));
+      } else {
+        Teuchos::RCP<op_t> Aop = A;
+        prec = MueLu::CreateTpetraPreconditioner(Aop, *muelu_params);
+        precOp = prec;
+      }
       Kokkos::fence();
       double ts = now() - t0;
       // Belos objects are built outside the timers (no numerical work).
       auto params = Teuchos::rcp(new Teuchos::ParameterList(*belos_params));
       solver = factory.create(solver_name, params);
       problem = Teuchos::rcp(new Belos::LinearProblem<SC, mv_t, op_t>(A, X, B));
-      if (side == "left") problem->setLeftPrec(prec);
-      else problem->setRightPrec(prec);
+      if (side == "left") problem->setLeftPrec(precOp);
+      else problem->setRightPrec(precOp);
       if (!problem->setProblem()) throw std::runtime_error("Belos setProblem failed");
       solver->setProblem(problem);
       return ts;
@@ -151,7 +206,11 @@ struct MueLuDriver {
       st.iters_all.push_back(solver->getNumIters());
       st.lib_converged = ret == Belos::Converged;
       st.relres_true.push_back(true_relres(hA, x_host(), hb));
-      if (first) { complexities(*prec->GetHierarchy(), st); first = false; }
+      if (first) {
+        if (half) complexities(*precf->GetHierarchy(), st);
+        else complexities(*prec->GetHierarchy(), st);
+        first = false;
+      }
       return tv;
     };
     try {
@@ -163,7 +222,7 @@ struct MueLuDriver {
     st.mem_peak = mem.peak();
     Json j;
     fill_result(j, rq, "muelu", TRILINOS_VERSION_STRING, st, tol);
-    j.str("solver", solver_name).str("prec_side", side);
+    j.str("solver", solver_name).str("prec_side", side).boolean("half_precision", half);
     return j;
   }
 };

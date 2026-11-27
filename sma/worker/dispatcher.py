@@ -10,6 +10,8 @@ Queue directory layout (shared filesystem between the login node and the GPU nod
   requests/<id>.req   written atomically by `sma-tools run` (tmp + rename)
   done/<id>.req       processed requests
   results/<id>.json   written by the driver (or by the dispatcher on driver failure)
+  <out dir>/lib.log   the library's own output during that request (driver stdout lines that are not
+                      protocol lines, and stderr): MueLu hierarchy tables, hypre/PETSc prints...
   drivers/<lib>.json  load statistics of each driver start (read/upload time)
   heartbeat.json      refreshed every loop: host, job id, pid, time, state
   STOP                create this file to make the worker exit
@@ -31,6 +33,7 @@ from collections import deque
 from pathlib import Path
 
 LIBS = ("hypre", "muelu", "petsc")
+CAPTURE_MAX_LINES = 20000
 
 
 def read_kv(path: Path) -> dict:
@@ -60,6 +63,7 @@ class Driver:
         self.stderr_tail: deque[str] = deque(maxlen=60)
         self.lines: deque[str] = deque()
         self.cv = threading.Condition()
+        self.capture: list[str] | None = None  # library output of the current request
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -67,6 +71,13 @@ class Driver:
     def _pump(self, stream, sink):
         for line in iter(stream.readline, ""):
             sink(line.rstrip("\n"))
+
+    def _keep(self, line: str):  # called with self.cv held
+        if self.capture is not None:
+            if len(self.capture) < CAPTURE_MAX_LINES:
+                self.capture.append(line)
+            elif len(self.capture) == CAPTURE_MAX_LINES:
+                self.capture.append(f"[... truncated after {CAPTURE_MAX_LINES} lines ...]")
 
     def _on_stdout(self, line: str):
         with self.cv:
@@ -82,6 +93,7 @@ class Driver:
                     if line.startswith(prefix):
                         return line[len(prefix):].strip()
                     self.stderr_tail.append("[stdout] " + line)
+                    self._keep(line)
                 if not self.alive() or time.time() > end:
                     return None
                 self.cv.wait(timeout=1.0)
@@ -95,7 +107,9 @@ class Driver:
 
         def err_sink(line, f=open(log, "a")):
             f.write(line + "\n"); f.flush()
-            self.stderr_tail.append(line)
+            with self.cv:
+                self.stderr_tail.append(line)
+                self._keep("[stderr] " + line)
 
         threading.Thread(target=self._pump, args=(self.proc.stdout, self._on_stdout), daemon=True).start()
         threading.Thread(target=self._pump, args=(self.proc.stderr, err_sink), daemon=True).start()
@@ -108,10 +122,22 @@ class Driver:
         info.update({"lib": self.lib, "wall_start_s": time.time() - t0, "started_at": time.time()})
         write_json(self.queue / "drivers" / f"{self.lib}.json", info)
 
-    def request(self, req: Path, timeout: float) -> str | None:
+    def request(self, req: Path, timeout: float, log: Path | None = None) -> str | None:
+        with self.cv:
+            self.capture = []
         self.proc.stdin.write(f"{req}\n")
         self.proc.stdin.flush()
-        return self._wait_line("DONE", timeout)
+        try:
+            return self._wait_line("DONE", timeout)
+        finally:
+            with self.cv:
+                lines, self.capture = self.capture, None
+            if log is not None:
+                try:
+                    log.parent.mkdir(parents=True, exist_ok=True)
+                    log.write_text("\n".join(lines) + ("\n" if lines else ""))
+                except OSError:
+                    pass
 
     def stop(self):
         if self.proc is None:
@@ -182,7 +208,8 @@ def main(argv=None):
                     except Exception as e:  # not caused by the config: not charged to the budget
                         raise InfraError(str(e)) from e
                     load_info = json.loads((queue / "drivers" / f"{lib}.json").read_text())
-                done = d.request(req, float(kv.get("timeout", 900)))
+                log = out.parent / "lib.log" if out.name == "result.json" else out.with_suffix(".lib.log")
+                done = d.request(req, float(kv.get("timeout", 900)), log)
                 if load_info is not None and out.exists():
                     res = json.loads(out.read_text())
                     res["driver_load"] = load_info

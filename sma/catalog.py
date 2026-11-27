@@ -8,6 +8,9 @@ Built once per library build (`sma-tools catalog`, on a GPU node: the drivers in
            Amesos2 coarse solvers available in this build.
   petsc  : `sma_petsc --catalog`: PETSc's own -help text for every registered KSP type, every PC
            type, and GAMG with level smoothers, on a small matrix; parsed here.
+Trilinos parts are then enriched from the sources of the built version (sma/srcscan.py): allowed values
+of string parameters (user guide tables + values the code compares them to), keys the code reads but
+does not declare ("source-only"), and declared MueLu keys that no code reads (no effect).
 Stored in $SMA_WORK/share/sma/params/<lib>.json; read by `sma-tools params`.
 The sources of the built versions (user guides included) are extracted from the spack source cache
 into $SMA_WORK/share/sma/src/<lib>-<version>/ for the agent to read offline.
@@ -123,10 +126,87 @@ def _muelu(raw: Path) -> dict:
     desc = _muelu_descriptions()  # MueLu user guide (masterList.xml) of the installed version
     for e in master:
         e["doc"] = e["doc"] or desc.get(e["name"], "")
-    return {"library": "muelu",
-            "muelu": master,
-            "ifpack2": _xml_list(ET.parse(raw / "ifpack2.xml").getroot()),
-            "belos": belos, "amesos2_available": amesos2}
+    d = {"library": "muelu",
+         "muelu": master,
+         "ifpack2": _xml_list(ET.parse(raw / "ifpack2.xml").getroot()),
+         "belos": belos, "amesos2_available": amesos2}
+    _enrich_trilinos(d)
+    return d
+
+
+# Forwarding statements (the interpreter copies the key into a factory list, or a factory declares it
+# valid): they do not count as a reader when looking for keys with no effect.
+_FORWARD = re.compile(r"(test_and_set_param_2list<[^>]*>|SET_VALID_ENTRY|MUELU_TEST_AND_SET_PARAM_2LIST|"
+                      r"test_and_set_var_from_masterlist)\s*\(")
+
+
+def _enrich_trilinos(d: dict) -> None:
+    from . import srcscan
+    ver = _pinned()["trilinos"][0]
+    src = src_dir() / f"trilinos-{ver}" / "packages"
+    if not src.exists():
+        d["enriched"] = False
+        return
+    tables = srcscan.tex_tables(src / "muelu" / "doc" / "UsersGuide")
+    belos_entries = [e for v in d["belos"].values() if isinstance(v, list) for e in v]
+    parts = {"muelu": d["muelu"], "ifpack2": d["ifpack2"], "belos": belos_entries}
+    for part, entries in parts.items():
+        skeys = sorted({e["name"].split(" / ")[-1] for e in entries if e["type"] == "string"})
+        found = srcscan.scan_values(src, part, skeys)
+        for e in entries:
+            if e["type"] != "string":
+                continue
+            key = e["name"].split(" / ")[-1]
+            vals, origin, partial = {}, [], True
+            for lab in re.findall(r"\\ref\{([^}]+)\}", e.get("doc") or ""):
+                t = tables.get(lab)
+                if t:
+                    vals.update({v: desc for v, desc in t["values"]})
+                    origin.append(f"MueLu user guide table {lab} ({t['file']})")
+                    partial = partial and not t["exhaustive"]
+            if key in found:
+                for v in found[key]:
+                    vals.setdefault(v, "")
+                origin.append("values compared to in the sources (" + ", ".join(sorted(set(found[key].values()))[:4])
+                              + (", ..." if len(set(found[key].values())) > 4 else "") + ")")
+            if part == "muelu" and key == "coarse: type":
+                avail = [k for k, ok in d["amesos2_available"].items() if ok]
+                vals.update({k: "Amesos2 direct solver available in this build" for k in avail})
+                origin.append("Amesos2 solvers of this build; any smoother type is also accepted")
+            if part == "muelu" and key == "coarse: type":  # direct solvers first
+                vals = {**{k: v for k, v in vals.items() if v.startswith("Amesos2")}, **vals}
+            # one spelling per value: the code often accepts case / space / underscore variants
+            seen, uniq = set(), {}
+            for v, desc in vals.items():
+                n = re.sub(r"[\s_]", "", v.upper())
+                if n not in seen:
+                    seen.add(n)
+                    uniq[v] = desc
+            vals = uniq
+            if vals:
+                dflt = (e.get("default") or "").strip('"')
+                norm = lambda v: re.sub(r"[\s_]", "", v.upper())
+                if dflt and norm(dflt) not in {norm(v) for v in vals}:
+                    vals = {dflt: "default", **vals}
+                e["values"] = vals
+                e["values_from"] = "; ".join(origin)
+                if e.get("doc"):
+                    e["doc"] = re.sub(r"(see\s+)?Table\s*~?\s*\\ref\{[^}]+\}", "see values", e["doc"], flags=re.I)
+    # declared MueLu keys that nothing reads (accepted by MueLu, no effect)
+    files = [(p, p.read_text(errors="replace")) for p in srcscan._files(src, ["muelu/src", "muelu/adapters"])
+             if "MasterList" not in p.name]
+    for e in d["muelu"]:
+        if e["type"] == "sublist":
+            continue
+        q = f'"{e["name"]}"'
+        live = any(not _FORWARD.search(srcscan._stmt(t, m.start()))
+                   for _, t in files if q in t for m in re.finditer(re.escape(q), t))
+        if not live:
+            e["no_effect"] = (f"no code of Trilinos {ver} reads this key (it is only declared/forwarded): "
+                              "accepted, but has no effect")
+    d["source_only"] = {part: srcscan.scan_hidden(src, part, {e["name"].split(" / ")[-1] for e in entries})
+                        for part, entries in parts.items()}
+    d["enriched"] = True
 
 
 OPT = re.compile(r"^\s*-(s\d+_)(\S+) <(.*?)>: (.*)$")
@@ -172,10 +252,12 @@ def _petsc(raw: Path) -> dict:
             "params": sorted(opts.values(), key=lambda e: e["name"])}
 
 
-def build(launcher: str = "", libs=("hypre", "muelu", "petsc")) -> None:
+def build(launcher: str = "", libs=("hypre", "muelu", "petsc"), parse_only: bool = False) -> None:
+    """parse_only: rebuild <lib>.json from the raw dumps already in params/raw (no driver run, no GPU)."""
     pd = params_dir()
     pd.mkdir(parents=True, exist_ok=True)
-    extract_sources()
+    if not parse_only:
+        extract_sources()
     bindir = sma_work() / "bin"
     for lib in libs:
         if lib == "hypre":
@@ -184,7 +266,8 @@ def build(launcher: str = "", libs=("hypre", "muelu", "petsc")) -> None:
             d = json.loads((pd / "hypre_params.json").read_text())
         else:
             raw = pd / "raw" / lib
-            _run(launcher, bindir / f"sma_{lib}", raw)
+            if not parse_only:
+                _run(launcher, bindir / f"sma_{lib}", raw)
             d = _muelu(raw) if lib == "muelu" else _petsc(raw)
         (pd / f"{lib}.json").write_text(json.dumps(d, indent=1) + "\n")
         print(f"{lib}: {pd / (lib + '.json')}")
@@ -194,6 +277,35 @@ def build(launcher: str = "", libs=("hypre", "muelu", "petsc")) -> None:
 def _short(doc: str, full: bool) -> str:
     doc = doc or ""
     return doc if full else " ".join(doc.split())[:160]
+
+
+_TAGS = {"gpu": "gpu", "depends": "gpu depends on its sub-type", "exempt": "coarsest level: host or GPU",
+         "host_setup": "host setup: allowed only when k = 0", "unknown": "no GPU rule",
+         "host_only": "HOST ONLY: refused", "do_not_try": "DO NOT TRY: refused"}
+
+
+def _values(e: dict, full: bool, lib: str, all_: bool) -> str:
+    """Allowed values of a string parameter, tagged with their GPU status (sma/gpu_support.yaml). Host-only
+    and do-not-try values are hidden unless --all (only GPU options are explored)."""
+    from .gpu import value_status
+    vals = e.get("values")
+    if not vals:
+        return ""
+    key = e["name"].split(" / ")[-1]
+    shown, hidden = [], 0
+    for v, desc in vals.items():
+        st = value_status(lib, key, v)
+        if st in ("host_only", "do_not_try") and not all_:
+            hidden += 1
+            continue
+        shown.append((v, desc, st))
+    tag = lambda st: f" [{_TAGS[st]}]" if st else ""
+    more = f"  ({hidden} host-only / do-not-try value(s) hidden; --all shows them)" if hidden else ""
+    if full:
+        lines = "".join(f"\n      {v}{tag(st)}" + (f": {_short(desc, False)}" if desc else "") for v, desc, st in shown)
+        return f"\n    values ({e.get('values_from', '')}):{lines}" + (f"\n    {more.strip()}" if more else "")
+    names = " | ".join(f"{v}{tag(st)}" for v, _, st in shown)
+    return f"\n    values: {names if len(names) < 500 else names[:500] + ' ...'}{more}"
 
 
 def _petsc_host_only_scenario(scen: str) -> bool:
@@ -210,7 +322,8 @@ def show(lib: str, grep: str | None = None, section: str | None = None, full: bo
         raise SystemExit(f"no catalogue for {lib}: run `sma-tools catalog` after building (GPU node)")
     d = json.loads(p.read_text())
     rx = re.compile(grep, re.I) if grep else None
-    keep = lambda e: rx is None or rx.search(e["name"]) or rx.search(e.get("doc") or "")
+    keep = lambda e: rx is None or rx.search(e["name"]) or rx.search(e.get("doc") or "") or \
+        any(rx.search(v) for v in (e.get("values") or {}))
     out = []
     if lib in ("hypre", "muelu"):
         out.append(f"GPU rules for values (smoothers, coarsening, ...): sma-tools params {lib} --gpu")
@@ -233,7 +346,18 @@ def show(lib: str, grep: str | None = None, section: str | None = None, full: bo
             for e in entries:
                 if keep(e):
                     out.append(f"[{name}] \"{e['name']}\"  {e['type']}  default={e['default']}"
-                               + (f"\n    {_short(e['doc'], full)}" if e["doc"] else ""))
+                               + (f"\n    {_short(e['doc'], full)}" if e["doc"] else "")
+                               + (f"\n    NO EFFECT: {e['no_effect']}" if e.get("no_effect") else "")
+                               + _values(e, full, "muelu", all_))
+        for part, keys in (d.get("source_only") or {}).items():
+            if section and not part.startswith(section.split(":")[0]):
+                continue
+            for k, e in sorted(keys.items()):
+                if rx is None or rx.search(k):
+                    out.append(f"[{part}:source-only] \"{k}\"  {e['type']}"
+                               + (f"  default={e['default']}" if e["default"] else "")
+                               + f"\n    read by the code but not in the library's list of valid parameters: "
+                               + ", ".join(e["where"]))
         if section in (None, "amesos2"):
             out.append("amesos2 coarse solvers available: "
                        + ", ".join(k for k, v in d["amesos2_available"].items() if v))

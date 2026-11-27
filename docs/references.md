@@ -8,7 +8,7 @@ describe another version).
 | what | where |
 |---|---|
 | every accepted parameter, type, default, doc text | `sma-tools params hypre\|muelu\|petsc [--grep R] [--full]` |
-| GPU support of values, with evidence | `sma-tools params LIB --gpu` (`sma/gpu_support.yaml`); `sma-tools gpu-check DECK` |
+| GPU support of values (doc/source evidence) and the do-not-try list | `sma-tools params LIB --gpu` (`sma/gpu_support.yaml`); `sma-tools gpu-check DECK` |
 | sources + user guides of the built versions | `$SMA_WORK/share/sma/src/{hypre-3.2.1,petsc-3.26.1,trilinos-17.3.0}/` |
 | MueLu: all parameters with descriptions | `trilinos-17.3.0/packages/muelu/doc/UsersGuide/masterList.xml`, `options_*.tex` |
 | Ifpack2 (MueLu smoothers): options | `trilinos-17.3.0/packages/ifpack2/doc/UsersGuide/options.tex`; `Ifpack2_Relaxation_def.hpp`, `Ifpack2_Chebyshev_def.hpp`, ... in the install `include/` |

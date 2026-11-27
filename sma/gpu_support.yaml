@@ -20,7 +20,6 @@ hypre:
       gpu: [4, 5, 6, 7, 8]
       otherwise: host_only
       source: *hypre_gpu
-      note: "observed on aij_2592000 (2026-11-26): AggNumLevels 1 + AggInterpType 6 crashed in a host routine; 8 worked"
     RelaxType:
       gpu: [3, 4, 6, 7, 11, 12, 16, 18]
       otherwise: host_only
@@ -90,23 +89,27 @@ muelu:
   exempt_prefix: "coarse:"
 
 # ---------------------------------------------------------------------------------------------
-# Setup on the host: refused when the setup is not measured (solves per setup k = 0), since a free
-# host setup would hide CPU work; allowed when k > 0 (its time is in the cost).
+# Setup on the host (decision 2026-11-27): only GPU options are explored, except the setup when it does
+# not matter. k = 0 (setup not measured): host setup allowed. k > 0 (setup in the cost): refused.
+# "default": the library default, checked when the deck does not set the key.
 setup_rules:
   muelu:
     "aggregation: backend":
       host_only: [host]
+      gpu: [default, kokkos]
       source: "Trilinos 17.3.0 MueLu_UncoupledAggregationFactory_def.hpp:183-197: \"host\" runs the non-Kokkos aggregation, moving the graph to the host"
+    "aggregation: coloring algorithm":
+      host_only: [serial]
+      gpu: [default, vertex based, vertex based bit set, edge filtering, net based bit set, mis2 aggregation, mis2 coarsening]
+      default: serial
+      source: "Trilinos 17.3.0 MueLu user guide, options.tex table t:coloring_algs: 'serial: Computes a D2 coloring on host, and then does 4-phase aggregation on device' (Parallel: No); MueLu_UncoupledAggregationFactory_def.hpp:528 serial -> KokkosGraph::COLORING_D2_SERIAL; MasterList default \"serial\". GPU alternatives: default (net based bit set on a GPU), vertex based*, edge filtering, net based bit set, mis2 aggregation, mis2 coarsening"
 
 # ---------------------------------------------------------------------------------------------
-# Ruled out (decision 2026-11-26): methods that run but are clearly bad on GPU, refused like host-only
-# values (not charged). Evidence: campaign agent-aij2592000 (2D Poisson, 2.6M rows, H100, exclusive node),
-# best valid configuration 22.7 ms per solve.
-ruled_out:
+# Do not try: values refused like host-only ones (not charged). A plain list, without justification
+# (decision 2026-11-27: the agent gets no results from earlier campaigns).
+do_not_try:
   muelu:
-    "multigrid algorithm":
-      values: [unsmoothed]
-      evidence: "run 6a029c: unsmoothed aggregation 73 iterations, 81.6 ms (SA: 22-23 iterations, 22.7 ms)"
-    "relaxation: type":
-      values: ["MT Gauss-Seidel", "MT Symmetric Gauss-Seidel"]
-      evidence: "runs 9fe441 (MT Symmetric GS, 309.9 ms) and 019b6f (MT GS pre/post, 203.3 ms): 10-20x slower per sweep than Chebyshev degree 1"
+    "multigrid algorithm": [unsmoothed]
+    "relaxation: type": ["MT Gauss-Seidel", "MT Symmetric Gauss-Seidel"]
+  hypre:
+    AggInterpType: [6]

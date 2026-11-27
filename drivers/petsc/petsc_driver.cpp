@@ -142,6 +142,17 @@ struct PetscDriver {
           st.levels = (int)L;
           PetscReal gc, oc;
           if (PCMGGetGridComplexity(pc, &gc, &oc) == 0) { st.grid_complexity = gc; st.op_complexity = oc; }
+          for (PetscInt l = L - 1; l >= 0; --l) {  // PCMG numbers the coarsest level 0: report finest first
+            KSP lk;
+            Mat Al;
+            PetscInt rows;
+            MatInfo info;
+            if (PCMGGetSmoother(pc, l, &lk) || KSPGetOperators(lk, &Al, nullptr) || MatGetSize(Al, &rows, nullptr) ||
+                MatGetInfo(Al, MAT_GLOBAL_SUM, &info))
+              break;
+            st.level_rows.push_back((double)rows);
+            st.level_nnz.push_back(info.nz_used);
+          }
         }
       }
       return tv;
